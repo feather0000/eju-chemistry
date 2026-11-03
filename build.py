@@ -42,7 +42,7 @@ ol{{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fil
 .n{{color:var(--acc);font-weight:700;font-size:13px}}small{{opacity:.7}}a{{color:var(--acc)}}#theme{{font:inherit;min-height:44px;padding:4px 16px;border-radius:22px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}}</style>
 <script>try{{var t=localStorage.getItem('eju-theme');if(t)document.documentElement.setAttribute('data-theme',t)}}catch(e){{}}</script></head><body><main>
 <h1>EJU 理科 化学 全专题讲解</h1><p>按 JASSO《日本留学試験 理科シラバス（化学）》编排：物质的构成・物质的状态与变化・化学反应・无机物质・有机化合物・高分子。每页含要点讲解（中文 + 日语术语）、关键公式、原创例题和带解答的 EJU 风格选择题。</p>
-<p><button id="theme" type="button">切换深浅色</button></p><ol>{lis}</ol><p><a href="https://feather0000.github.io/eju-calculus/">→ EJU 数学コース2 网站</a>　<a href="https://feather0000.github.io/eju-physics/">→ EJU 理科 物理 网站</a></p></main>
+<p><button id="theme" type="button">切换深浅色</button></p><ol>{lis}</ol><p><a href="https://feather0000.github.io/eju-calculus/">→ EJU 数学コース2 网站</a>　<a href="https://feather0000.github.io/eju-physics/">→ EJU 理科 物理 网站</a>　<a href="https://feather0000.github.io/eju-biology/">→ EJU 理科 生物 网站</a></p></main>
 <script>document.getElementById('theme').onclick=function(){{var d=document.documentElement,c=d.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'),t=c==='dark'?'light':'dark';d.setAttribute('data-theme',t);try{{localStorage.setItem('eju-theme',t)}}catch(e){{}}}}</script><script src="assets/nav.js"></script></body></html>''')
 nav=open('/workspace/eju-pages/assets/nav.js').read().split('\n')
 T=[dict(n=t['n'],slug=t['slug'],zh=t['zh'],ja=t['ja'],ready=True) for t in TOPICS]
