@@ -4,8 +4,8 @@ lead='阿伦尼乌斯与布朗斯特定义、电离度、pH、中和反应与滴
 hero=[r'\mathrm{pH}=-\log_{10}[\ce{H+}]',r'\ce{H+ + OH- -> H2O}'],
 sections=[
 ('def','酸碱的定义','酸・塩基の定義',CE('HCl -> H+ + Cl-','NH3 + H2O <=> NH4+ + OH-')+'<p>阿伦尼乌斯：水中给出 $\\ce{H+}$ / $\\ce{OH-}$。布朗斯特：给出 $\\ce{H+}$ 的是酸，接受的是碱。强酸：HCl、$\\ce{HNO3}$、$\\ce{H2SO4}$；强碱：NaOH、KOH、$\\ce{Ca(OH)2}$、$\\ce{Ba(OH)2}$。</p>'),
-('ph','pH','水素イオン濃度',F(r'K_w=[\ce{H+}][\ce{OH-}]=1.0\times10^{-14}\ (25\,^\circ\mathrm C)',r'[\ce{H+}]=c\alpha\cdot(\text{价数})')),
-('neut','中和与滴定','中和滴定',CE('H2SO4 + 2NaOH -> Na2SO4 + 2H2O','CH3COOH + NaOH -> CH3COONa + H2O')+F(r'a\,c\,V=b\,c\'\,V\'')+'<p>指示剂：强酸×强碱 两者皆可；弱酸×强碱 用<b>酚酞</b>（碱性侧变色）；强酸×弱碱 用<b>甲基橙</b>。</p>'),
+('ph','pH','水素イオン濃度',F(r'K_w=[\ce{H+}][\ce{OH-}]=1.0\times10^{-14}\ (25\,{}^\circ\mathrm C)',r'[\ce{H+}]=c\alpha\cdot(\text{价数})')),
+('neut','中和与滴定','中和滴定',CE('H2SO4 + 2NaOH -> Na2SO4 + 2H2O','CH3COOH + NaOH -> CH3COONa + H2O')+F(r"a\,c\,V=b\,c'\,V'")+'<p>指示剂：强酸×强碱 两者皆可；弱酸×强碱 用<b>酚酞</b>（碱性侧变色）；强酸×弱碱 用<b>甲基橙</b>。</p>'),
 ('salt','盐的水解・缓冲','塩の加水分解・緩衝液',CE('CH3COO- + H2O <=> CH3COOH + OH-')+'<p>弱酸＋强碱的盐显碱性，强酸＋弱碱的盐显酸性。醋酸与醋酸钠的混合液为缓冲溶液。</p>'),
 ],
 examples=[('稀释','<p>pH 2 的盐酸稀释 100 倍后 pH？</p>','<p>$[\\ce{H+}]=10^{-4}$，pH 4。</p>')],

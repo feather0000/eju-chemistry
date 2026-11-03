@@ -3,7 +3,7 @@ TOPIC=dict(n=5,slug='mole',area='物质的状态',zh='物质的量与化学方�
 lead='阿伏伽德罗常数、摩尔质量、标准状况下气体体积，化学方程式的配平与量的计算、过量问题。',
 hero=[r'n=\frac{m}{M}=\frac{N}{N_A}=\frac{V}{22.4\,\mathrm{L/mol}}',r'\ce{2H2 + O2 -> 2H2O}'],
 sections=[
-('mol','物质的量','物質量',F(r'N_A=6.0\times10^{23}\,/\mathrm{mol}',r'n=\frac{m}{M}',r'V=22.4n\ \mathrm{L}\ (0\,^\circ\mathrm C,\ 1.013\times10^5\,\mathrm{Pa})')),
+('mol','物质的量','物質量',F(r'N_A=6.0\times10^{23}\,/\mathrm{mol}',r'n=\frac{m}{M}',r'V=22.4n\ \mathrm{L}\ (0\,{}^\circ\mathrm C,\ 1.013\times10^5\,\mathrm{Pa})')),
 ('eq','化学方程式','化学反応式',CE('CH4 + 2O2 -> CO2 + 2H2O','C3H8 + 5O2 -> 3CO2 + 4H2O','2Al + 6HCl -> 2AlCl3 + 3H2')+'<p>系数比 = 物质的量之比（气体则还 = 同温同压下体积比）。配平时先配复杂分子，再配 H、最后配 O；必要时用未定系数法。</p>'),
 ('excess','过量与限量','過不足のある反応',B('方法','把各反应物的物质量除以系数，最小者为限量反应物，产物按它计算。','good')),
 ],
