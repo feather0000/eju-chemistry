@@ -1,0 +1,30 @@
+from _x import *
+TOP = others(17)
+PF = [
+('cond',r'22.4 L/mol 用在非标准状况',r'任何气体、任何温度都用 22.4 L/mol。',r'22.4 L/mol 只适用于 0 °C、$1.013\times10^5$ Pa 的气体。其他条件用 $pV=nRT$；水在标准状况下是液体，不能用 22.4。',r'27 °C、$8.3\times10^4$ Pa 下 0.60 L 的气体 0.64 g：$M=wRT/pV=32$，不能用 22.4 L/mol 换算。',[('gas','p6'),('mole','p2')]),
+('cond',r'忘了饱和蒸气压的上限',r'0.10 mol 水在 8.3 L 容器中，分压按 $nRT/V$ 算得 $3.0\times10^4$ Pa。',r'算出的值若超过该温度的饱和蒸气压，多出的水凝结成液体，分压就等于饱和蒸气压。',r'27 °C 饱和蒸气压 $3.6\times10^3$ Pa < $3.0\times10^4$ Pa ⇒ 水的分压 $=3.6\times10^3$ Pa。',[('gas','p11'),('constants','vapor')]),
+('unit',r'摄氏温度代入 pV=nRT',r'$T=27$ 直接代入。',r'$T=t+273$ K（27 °C → 300 K，127 °C → 400 K）。',r'0.50 mol 气体在 127 °C、8.3 L：$p=0.50\times8.3\times10^3\times400/8.3=2.0\times10^5$ Pa。',[('gas','p3'),('gas','p2')]),
+('unit',r'R 的数值与体积单位不配套',r'体积用 L，R 却取 8.3。',r'$V$ [L] 配 $R=8.3\times10^3\,\mathrm{Pa\cdot L/(K\cdot mol)}$；$V$ [m³] 配 $R=8.3$。',r'同一题用错 R 会差 1000 倍，选项里往往正好有这个错误答案。',[('gas','law'),('constants','gasR')]),
+('unit',r'物质的量浓度用溶剂体积',r'4.0 g NaOH 溶于 500 mL 水 ⇒ 0.20 mol/L。',r'mol/L 的分母是<b>溶液</b>体积。“配成 500 mL 溶液”才是 0.20 mol/L；质量摩尔浓度才用溶剂质量（kg）。',r'浓硫酸 98%、1.8 g/cm³：1 L 溶液 1800 g，含 H₂SO₄ $1800\times0.98/98=18$ mol ⇒ 18 mol/L。',[('solution','p1'),('solution','p3'),('solution','p2')]),
+('concept',r'依数性忘了电离',r'同为 0.1 mol/kg，NaCl 和葡萄糖的凝固点降低一样。',r'电解质按电离后的全部粒子计：NaCl ×2，CaCl₂ ×3。',r'NaCl 0.10 mol/kg：$\Delta t=1.85\times0.10\times2=0.37$ K；同浓度 CaCl₂ 沸点最高。',[('solution','p5'),('solution','p6'),('solution','p12')]),
+('cond',r'过量与限量：用质量比',r'H₂ 4.0 g 与 O₂ 16 g，按质量少的 H₂ 计算。',r'先换算成 mol，再除以系数比较：$\ce{2H2 + O2 -> 2H2O}$ 中 H₂ 2.0 mol、O₂ 0.50 mol，O₂ 是限量。',r'生成 H₂O 1.0 mol = 18 g。',[('mole','p5'),('mole','p11')]),
+('sign',r'ΔH 与“反应热 Q”的符号',r'放热反应 ΔH 为正。',r'ΔH 是体系焓的变化：放热 ΔH < 0。旧式“反应热 Q”放热为正，二者符号相反，看清题目用哪一种。',r'$\ce{H2 + Cl2 -> 2HCl}$：$\Delta H=436+243-2\times432=-185$ kJ（放热）。',[('thermo','p3'),('thermo','p10'),('thermo','p7')]),
+('cond',r'生成焓里水的状态',r'H₂O 的生成焓不管液体、气体都用 −286。',r'−286 kJ/mol 是液态水；气态水约 −242 kJ/mol。燃烧焓的定义以生成液态水为准。',r'C₂H₆ 燃烧焓：$2(-394)+3(-286)-(-84)\approx-1560$ kJ/mol（H₂O 为液体）。',[('thermo','p2'),('thermo','hess')]),
+('cond',r'平衡常数代入物质的量',r'把 mol 直接代入 K。',r'$K_c$ 用浓度（mol/L）。容器 1 L 时数值相同，体积不是 1 L 时要先除以体积；$\Delta n=0$ 的反应体积会约掉。固体、溶剂水不写进 K。',r'H₂、I₂ 各 1.0 mol 在 1.0 L 中，平衡 HI 1.6 mol：$K=1.6^2/(0.20\times0.20)=64$。',[('equilibrium','p9'),('equilibrium','p1')]),
+('concept',r'催化剂使平衡移动',r'加催化剂，产率提高。',r'催化剂降低活化能，正逆反应同样加快，只缩短到达平衡的时间；平衡组成和 K 都不变。',r'哈伯法提高 NH₃ 平衡产率要靠低温・高压，不是催化剂。',[('equilibrium','p12'),('equilibrium','p10')]),
+('cond',r'加入惰性气体：定容与定压不分',r'加入 Ar，总压升高，平衡向分子数少的一侧移动。',r'定容加入：各分压不变，平衡不移动。定压加入：体积增大、各分压降低，向气体分子数多的一侧移动。',r'定压下向 $\ce{N2O4 <=> 2NO2}$ 加 Ar ⇒ 向右移动。',[('equilibrium','p11'),('equilibrium','inert')]),
+('concept',r'中和量与酸的强弱混淆',r'醋酸是弱酸，所以中和需要的 NaOH 少。',r'中和所需碱量只由酸的物质的量和价数决定（$acV=bc^{\prime}V^{\prime}$），与强弱无关；强弱影响的是 pH 和指示剂选择。',r'0.10 mol/L 硫酸 10 mL（2 价）需 0.10 mol/L NaOH 20 mL。',[('acid-base','p4'),('acid-base','p11'),('acid-base','p5')]),
+('read',r'碱溶液直接用 −log[OH⁻] 当 pH',r'0.0010 mol/L NaOH 的 pH = 3。',r'先求 pOH = 3，再用 pH = 14 − pOH（25 °C）。',r'pH = 11。',[('acid-base','p2')]),
+('sig',r'pH 的对数近似',r'混合后 [H⁺] = 0.05 mol/L，pH 约为 1 或 2。',r'混合后体积要相加；用 $\log2=0.30$、$\log5=0.70$ 等给定值算到小数一位。',r'0.20 mol/L HCl 10 mL + 0.10 mol/L NaOH 10 mL：剩余 H⁺ $1.0\times10^{-3}$ mol / 20 mL ⇒ $5.0\times10^{-2}$ mol/L，pH = 1.3。',[('acid-base','p9'),('acid-base','p8')]),
+('cond',r'氧化还原滴定忘了电子数之比',r'KMnO₄ 与 Fe²⁺ 按 1:1 反应。',r'按得失电子数配平：$\ce{MnO4-}$ 得 5 e⁻，$\ce{Fe^2+}$ 失 1 e⁻，$\ce{H2O2}$ 失 2 e⁻。',r'0.10 mol/L FeSO₄ 20 mL：$0.10\times20\times1=0.020\times V\times5$ ⇒ $V=20$ mL。',[('redox','p4'),('redox','p9')]),
+('unit',r'法拉第定律的时间单位',r'通电“16 分 5 秒”直接代入 16.05。',r'$Q=It$ 中 $t$ 用秒；电子 mol = $It/F$，再按离子价数换算析出量。',r'5.0 A × 1930 s ÷ 96500 = 0.10 mol e⁻。Al 2.7 kg = 100 mol，需 $300\times96500\approx2.9\times10^7$ C。',[('electrolysis','p1'),('electrolysis','p6'),('electrolysis','p2')]),
+('concept',r'铅蓄电池负极质量减少',r'负极 Pb 被氧化溶解，质量减少。',r'Pb 变成难溶的 PbSO₄ 附着在电极上，负极、正极质量<b>都增加</b>（负极 +SO₄ 96 g/mol，正极 PbO₂→PbSO₄ +SO₂ 64 g/mol）。',r'流过 0.20 mol e⁻：负极 +9.6 g，正极 +6.4 g。',[('electrolysis','p9'),('electrolysis','p10'),('redox','p7')]),
+('read',r'电解时阴极析出 Na',r'电解 NaCl 水溶液，阴极得到 Na。',r'水溶液中 Na⁺、K⁺、Al³⁺ 等离子化倾向大的离子不析出，阴极由水还原放出 H₂；得到 Na 要电解熔融 NaCl。',r'Pt 电极电解 NaCl 水溶液：阴极 H₂，阳极 Cl₂。',[('electrolysis','p3'),('electrolysis','p12')]),
+('cond',r'气体体积比与系数比的前提',r'任何条件下气体体积比 = 系数比。',r'只在同温同压下成立；水在常温下是液体，不计入气体体积。',r'CH₄ 与 H₂ 等物质的量混合气体 100 mL 完全燃烧，所需 O₂ 按 $2\times50+\frac12\times50=125$ mL（同温同压）。',[('mole','p12'),('mole','p3')]),
+('sig',r'原子量取值不统一',r'Cl 取 35 或 Cu 取 64，与题目给的不同。',r'一律用题目开头给出的原子量（本站：Cl 35.5、Cu 63.5）；有效数字跟随数据，一般取 2–3 位。',r'Cu 0.635 g = 0.0100 mol（用 63.5）。',[('electrolysis','p8'),('atom','p11')]),
+('concept',r'同位素化学性质不同',r'¹²C 和 ¹⁴C 化学性质不同。',r'同位素质子数、电子排布相同，化学性质几乎相同；不同的是质量数和中子数（及放射性）。',r'³⁷Cl⁻：中子 20 + 电子 18 = 38。',[('atom','p8'),('atom','p9')]),
+('read',r'结晶水的质量算进溶质',r'含结晶水的晶体溶解后，晶体质量全是溶质。',r'CuSO₄·5H₂O 等溶解时结晶水变成溶剂；热分解失重即结晶水的质量。',r'CuSO₄·xH₂O 2.50 g → 1.60 g：失水 0.90 g = 0.050 mol，CuSO₄ 0.010 mol ⇒ $x=5$。',[('mole','p9')]),
+]
+TOPIC=dict(n=18,slug='pitfalls',area='速查',zh='易错点・陷阱',ja='間違えやすいポイント',sub=f'{len(PF)} 个常见错误与例子',
+lead='按错误类型整理：单位、有效数字、成立条件（标准状况、饱和蒸气压、定容／定压）、符号、概念混淆、读题。每条都有简短例子，并链接到站内相关题目。',
+hero=[r'T=t+273',r'22.4\,\mathrm{L/mol}\ (0\,{}^\circ\mathrm C)'],sections=pitfall_sections(TOP,PF),examples=[],problems=[],terms=[])
