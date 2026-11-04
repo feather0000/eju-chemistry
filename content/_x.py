@@ -154,6 +154,6 @@ def detex(s):
         x = re.sub(r'\\[td]?frac\{([^{}]*)\}\{([^{}]*)\}', r'(\1)/(\2)', x); x = re.sub(r'\\[td]?frac(\d)(\d)', r'\1/\2', x)
         x = re.sub(r'\\(?:ce|mathrm|text|B|boxed|left|right)\b', '', x)
         x = re.sub(r'\\([A-Za-z]+)', lambda k: _G.get(k.group(1), k.group(1)), x)
-        x = re.sub(r'\((\w)\)', r'\1', x).replace('\\,', ' ').replace('{', '').replace('}', '').replace('^2', '²').replace('^3', '³')
+        x = x.replace('\\,', ' ').replace('{', '').replace('}', '').replace('^2', '²').replace('^3', '³').replace('^′', '′')
         return x
     return re.sub(r'\$\$?(.+?)\$\$?', f, s)
