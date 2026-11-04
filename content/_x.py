@@ -89,7 +89,7 @@ def build_index(TOPICS, out='assets/search.json', skip=('search',)):
             if t['slug'] == 'terms': continue
             if t['slug'] == 'tips':
                 for m in re.finditer(r'<article class="q tip" id="(tip\d+)"><div class="q-head"><b>(.*?)</b>(.*?)</article>', body, re.S):
-                    I.append([kind, plain(m.group(2)), plain(m.group(3))[:700], u + '#' + m.group(1)])
+                    I.append([kind, detex(plain(m.group(2))), detex(plain(m.group(3)))[:700], u + '#' + m.group(1)])
                 continue
             I.append([kind, f'{t["zh"]} · {tt}', plain(ja + ' ' + body)[:900], u + '#' + sid])
         for k, p in enumerate(t['problems']):
@@ -146,3 +146,14 @@ def tip_backsec(slug, TIPS, base='../tips/'):
     if not T: return None
     li = ''.join(f'<li><a href="{base}#{tp["id"]}">{tp["t"]}</a> — {tp["when"]}</li>' for tp in T)
     return ('tips', '快速解题技巧', '速解テクニック', f'<ul class="tip-back">{li}</ul><p class="more"><a href="{base}">→ 全部快速解题技巧（最值得掌握的 10 招）</a></p>')
+_G = {'alpha': 'α', 'beta': 'β', 'theta': 'θ', 'lambda': 'λ', 'mu': 'μ', 'pi': 'π', 'Delta': 'Δ', 'varepsilon': 'ε', 'rho': 'ρ', 'omega': 'ω', 'Phi': 'Φ', 'sqrt': '√', 'times': '×', 'cdot': '·', 'le': '≤', 'ge': '≥', 'to': '→', 'parallel': '∥', 'prime': '′', 'circ': '°', 'propto': '∝', 'infty': '∞', 'pm': '±', 'nmid': '∤', 'vec': ''}
+def detex(s):
+    """搜索索引用：把 $…$ 中的 LaTeX 变成可读的纯文本"""
+    def f(m):
+        x = m.group(1)
+        x = re.sub(r'\\[td]?frac\{([^{}]*)\}\{([^{}]*)\}', r'(\1)/(\2)', x); x = re.sub(r'\\[td]?frac(\d)(\d)', r'\1/\2', x)
+        x = re.sub(r'\\(?:ce|mathrm|text|B|boxed|left|right)\b', '', x)
+        x = re.sub(r'\\([A-Za-z]+)', lambda k: _G.get(k.group(1), k.group(1)), x)
+        x = re.sub(r'\((\w)\)', r'\1', x).replace('\\,', ' ').replace('{', '').replace('}', '').replace('^2', '²').replace('^3', '³')
+        return x
+    return re.sub(r'\$\$?(.+?)\$\$?', f, s)
