@@ -1,0 +1,31 @@
+from _x import *
+TOP = others(17)
+F = [
+('atom',r'isotope',r'原子量','原子量',[(r'\text{原子量}=\sum(\text{同位素相对质量}\times\text{存在比})',r'存在比用小数（%÷100）。'),(r'\text{质量数}=\text{质子数}+\text{中子数}',r'离子的电子数 = 原子序数 − 电荷数（阳离子）或 + 电荷数（阴离子）。')]),
+('mole',r'mol',r'物质的量','物質量',[(r'n=\frac{m}{M}=\frac{N}{N_A}=\frac{V}{22.4\,\mathrm{L/mol}}',r'$22.4$ L/mol 只用于<b>标准状况</b>（0 °C, $1.013\times10^5$ Pa）的<b>气体</b>；液体、固体、其他温度下不能用。'),(r'N_A=6.0\times10^{23}\,/\mathrm{mol}',r'')]),
+('mole',r'eq',r'化学方程式的量的关系','化学反応式と量的関係',[(r'\text{系数比}=\text{物质的量之比}\ (=\text{同温同压下的气体体积比})',r'质量比不等于系数比；先换算成 mol。'),(r'\ce{CH4 + 2O2 -> CO2 + 2H2O}',r'例：1 mol 甲烷需 2 mol 氧。')]),
+('mole',r'excess',r'过量与限量','過不足',[(r'\text{生成量由“系数折算后较少的”反应物决定}',r'各反应物的 mol 除以各自系数，最小者为限量试剂。')]),
+('gas',r'law',r'气体定律','気体の法則',[(r'pV=nRT,\quad R=8.3\times10^3\,\mathrm{Pa\cdot L/(K\cdot mol)}',r'$T$ 用 K（$t+273$）；$V$ 用 L 时 $R$ 取 $8.3\times10^3$，用 m³ 时取 8.3。'),(r'\frac{p_1V_1}{T_1}=\frac{p_2V_2}{T_2}',r'物质的量不变的同一气体。'),(r'M=\frac{wRT}{pV}',r'由质量 $w$ 求分子量。')]),
+('gas',r'partial',r'分压','分圧',[(r'p_A=p_{\text{全}}\times\frac{n_A}{n_{\text{全}}},\quad \bar M=\sum M_ix_i',r'理想气体混合物；同温同体积时分压之比 = 物质的量之比。')]),
+('gas',r'vapor',r'饱和蒸气压','飽和蒸気圧',[(r'p_{\text{水}}\le p_{\text{饱和}}(T)',r'按全部为气体算出的分压若超过饱和蒸气压，则有液体存在，水蒸气分压就等于饱和蒸气压。排水集气：$p_{\text{气体}}=p_{\text{大气}}-p_{\text{水蒸气}}$。<a href="../constants/#vapor">饱和蒸气压表</a>')]),
+('solution',r'conc',r'浓度','濃度',[(r'c=\frac{n}{V_{\text{溶液}}\,[\mathrm L]},\quad m=\frac{n}{w_{\text{溶剂}}\,[\mathrm{kg}]}',r'物质的量浓度按<b>溶液</b>体积；质量摩尔浓度按<b>溶剂</b>质量。'),(r'c=\frac{1000\,\rho\,x}{M}',r'质量分数 $x$（小数）、密度 $\rho$ [g/cm³] 换算为 mol/L。')]),
+('solution',r'solub',r'溶解度','溶解度',[(r'\frac{\text{溶质}}{\text{溶液}}=\frac{S}{100+S}',r'$S$：100 g 水中最多溶解的克数（饱和溶液）；含结晶水的盐要分开算水。'),(r'\text{亨利定律：溶解量}\propto p',r'溶解度小、不与水反应的气体；溶解的“体积”换算到该压强下则与压强无关。')]),
+('solution',r'colli',r'依数性','束一的性質',[(r'\Delta t=K\,m\,i,\quad \Pi V=nRT\ (\Pi=cRT)',r'稀溶液。电解质要乘电离后的粒子数 $i$（NaCl 为 2，CaCl₂ 为 3，完全电离时）。')]),
+('thermo',r'hess',r'反应焓与赫斯定律','反応エンタルピーとヘスの法則',[(r'\Delta H=\sum\Delta_fH(\text{生成物})-\sum\Delta_fH(\text{反应物})',r'单质的生成焓为 0；注意 $\ce{H2O}$ 是液体还是气体。'),(r'\Delta H=\sum(\text{反应物键能})-\sum(\text{生成物键能})',r'只适用于全部是气体分子时。'),(r'\Delta H<0\ \text{放热},\quad Q=mc\Delta T',r'旧教材用“反应热 $Q$”（放热为正），符号与 $\Delta H$ 相反。')]),
+('equilibrium',r'rate',r'反应速率','反応速度',[(r'v=-\frac{\Delta[\mathrm A]}{\Delta t},\quad v=k[\mathrm A]^a[\mathrm B]^b',r'速率式的指数由实验决定，不一定等于方程式系数。')]),
+('equilibrium',r'k',r'平衡常数','平衡定数',[(r'K_c=\frac{[\mathrm C]^c[\mathrm D]^d}{[\mathrm A]^a[\mathrm B]^b}',r'用平衡时的<b>浓度</b>（mol/L）；固体和溶剂水不写入。$K$ 只随温度变化。'),(r'K_p=K_c(RT)^{\Delta n}',r'$\Delta n$ = 气体生成物系数和 − 气体反应物系数和。')]),
+('equilibrium',r'ion',r'电离平衡・溶度积','電離平衡・溶解度積',[(r'[\mathrm{H^+}]=c\alpha\approx\sqrt{cK_a}',r'弱酸、$\alpha\ll1$（约 < 0.05）时的近似。'),(r'K_{sp}=[\mathrm{Ag^+}][\mathrm{Cl^-}]',r'离子积 > $K_{sp}$ 时生成沉淀。')]),
+('acid-base',r'ph',r'pH','pH',[(r'\mathrm{pH}=-\log_{10}[\mathrm{H^+}],\quad [\mathrm{H^+}][\mathrm{OH^-}]=K_w=1.0\times10^{-14}',r'$K_w$ 的数值是 25 °C 时的；强碱先求 $[\mathrm{OH^-}]$ 再换算。极稀溶液（< 10⁻⁶ mol/L）要考虑水的电离。')]),
+('acid-base',r'neut',r'中和','中和',[(r'a\,c\,V=b\,c^{\prime}V^{\prime}',r'$a,b$ 是酸、碱的价数（H₂SO₄ 为 2）；与强弱无关。')]),
+('acid-base',r'salt',r'缓冲溶液','緩衝液',[(r'[\mathrm{H^+}]=K_a\frac{c_{\text{酸}}}{c_{\text{盐}}}',r'弱酸与其盐的混合溶液；两者都不太稀时成立。')]),
+('redox',r'half',r'氧化还原的量的关系','酸化還元の量的関係',[(r'\text{氧化剂得到的 } e^-=\text{还原剂失去的 } e^-',r'例：$\ce{MnO4- + 8H+ + 5e- -> Mn^2+ + 4H2O}$，$\ce{Fe^2+ -> Fe^3+ + e-}$ ⇒ $\mathrm{KMnO_4}:\mathrm{Fe^{2+}}=1:5$。'),(r'\ce{MnO4- + 5Fe^2+ + 8H+ -> Mn^2+ + 5Fe^3+ + 4H2O}',r'硫酸酸性中。')]),
+('redox',r'cell',r'电池','電池',[(r'\text{负极：氧化（失电子）},\ \text{正极：还原（得电子）}',r'离子化倾向大的金属作负极。'),(r'\ce{Pb + PbO2 + 2H2SO4 -> 2PbSO4 + 2H2O}',r'铅蓄电池放电：两极都变成 PbSO₄，质量都增加，电解液浓度降低。')]),
+('electrolysis',r'faraday',r'法拉第定律','ファラデーの法則',[(r'n_{e^-}=\frac{It}{F},\quad F=9.65\times10^4\,\mathrm{C/mol}',r'$t$ 用秒。析出量 = 电子 mol ÷ 离子价数。')]),
+('electrolysis',r'rule',r'电极反应','電極反応',[(r'\ce{2H2O + 2e- -> H2 + 2OH-}\quad(\text{阴极，Na}^+\text{ 等不析出})',r'K⁺、Ca²⁺、Na⁺、Mg²⁺、Al³⁺ 的水溶液中，阴极放出 H₂。'),(r'\ce{2H2O -> O2 + 4H+ + 4e-}\quad(\text{阳极，Pt/C，含氧酸根})',r'阳极是 Cu、Ag 等金属时电极本身溶解；Cl⁻ 存在时放出 Cl₂。')]),
+('organic',r'anal',r'元素分析','元素分析',[(r'm_C=m_{\mathrm{CO_2}}\times\frac{12}{44},\quad m_H=m_{\mathrm{H_2O}}\times\frac{2}{18}',r'O 的质量 = 试样 − C − H。由 mol 比得组成式，再用分子量定分子式。')]),
+('organic',r'hc',r'不饱和度','不飽和度',[(r'\text{不饱和度}=\frac{2C+2-H}{2}',r'O 不影响；含卤素 X、氮 N 时用 $\frac{2C+2+N-H-X}{2}$。双键或环各算 1，三键算 2，苯环算 4。')]),
+('polymer',r'poly',r'聚合度','重合度',[(r'n=\frac{\text{高分子分子量}}{\text{单体（重复单位）式量}}',r'缩合聚合时重复单位要减去脱去的水。'),(r'\text{肽的分子量}=\sum M_{\text{氨基酸}}-18\times(\text{肽键数})',r'$n$ 个氨基酸成链状肽脱去 $n-1$ 个水。')]),
+]
+TOPIC=dict(n=17,slug='formulas',area='速查',zh='公式速查',ja='公式集',sub='按专题的核心公式与成立条件',
+lead='计算题最常用的公式与关系式，和成立条件放在一起。点每组下面的链接回到对应讲解与练习题。',
+hero=[r'pV=nRT',r'n=\frac{It}{F}'],sections=formula_sections(TOP,F),examples=[],problems=[],terms=[])
