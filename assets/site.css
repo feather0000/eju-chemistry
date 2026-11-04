@@ -262,4 +262,8 @@ main .chip[aria-pressed=true] { background: var(--accent); color: var(--surface)
 .sx-res a { font-weight: 700; display: inline-flex; min-height: 32px; align-items: center; } .sx-res .k { font-size: 12px; padding: 1px 7px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); margin-right: 6px; }
 .sx-res p { margin: 2px 0 0; font-size: 14px; color: var(--ink-2); overflow-wrap: anywhere; } .sx-res mark { background: var(--accent-soft); color: inherit; font-weight: 700; }
 main [hidden] { display: none !important; }
+.tip .tip-top{margin-left:8px;font-size:12px;font-weight:700;padding:1px 8px;border-radius:10px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)}
+.tip-steps{margin:6px 0 8px 1.2em;padding:0}.tip-steps li{margin:2px 0}
+.tip-top10{padding-left:1.4em}.tip-top10 li{margin:6px 0}.tip-top10 a,.tip-back a{display:inline-block;min-height:28px}
+.tip-back{padding-left:1.2em}.tip-back li{margin:4px 0}
 /*X-END*/

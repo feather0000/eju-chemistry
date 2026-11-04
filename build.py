@@ -16,6 +16,15 @@ TOPICS=[]
 for f in sorted(glob.glob('content/[0-9]*.py')):
     s=importlib.util.spec_from_file_location(os.path.basename(f)[:-3],f); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); TOPICS.append(m.TOPIC)
 MARK='①②③④⑤⑥'
+# TIPS-HOOK
+_TIPS = next((t.get('tips_data') for t in TOPICS if t.get('tips_data')), None)
+if _TIPS:
+    from _x import tip_backsec
+    for t in TOPICS:
+        if t.get('bank') or t['problems']:
+            t['sections'] = [s for s in t['sections'] if s[0] != 'tips']
+            _s = tip_backsec(t['slug'], _TIPS)
+            if _s: t['sections'].append(_s)
 def page(t):
     toc=[(sid,tt) for sid,tt,_,_ in t['sections']]+([('demo','互动演示')] if DEMOS.get(t['slug']) else [])+([('examples','例题')] if t['examples'] else [])+([('practice','练习题')] if t['problems'] else [])+([('terms','术语对照')] if t['terms'] else [])
     tochtml=''.join(f'<li><a href="#{i}">{k+1} {tt}</a></li>' for k,(i,tt) in enumerate(toc))

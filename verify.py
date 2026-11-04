@@ -36,4 +36,10 @@ bad+=ebad
 import subprocess
 r=subprocess.run(['node','tests/test_chem.js'],capture_output=True,text=True);print(r.stdout.strip())
 if r.returncode: bad+=1
+# TIPS-CHECK
+try:
+    import glob as _g; _f=[x for x in _g.glob('content/[0-9]*_tips.py')][0]
+    _s=importlib.util.spec_from_file_location('tips',_f); _m=importlib.util.module_from_spec(_s); _s.loader.exec_module(_m)
+    from _x import tip_check; print(f'{len(_m.TIPS)} tips, {tip_check(_m.TIPS)} worked-example numeric checks, 0 failures')
+except AssertionError as e: bad+=1; print('FAIL tips', e)
 print(f'{n} problems, {n-nc} numerically verified, {nc} conceptual, {bad} failures'); sys.exit(1 if bad else 0)

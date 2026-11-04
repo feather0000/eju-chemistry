@@ -17,7 +17,7 @@
       if (hit) { out += '<mark>' + esc(s.substr(i, hit)) + '</mark>'; i += hit; } else { out += esc(s[i]); i++; } }
     return (a > 0 && p >= 0 ? '…' : '') + out + (raw.length > (p < 0 ? 110 : p + L + 70) ? '…' : '');
   }
-  var KINDS = ['', '题', '讲解', '公式', '易错', '术语', '数据', '页'];
+  var KINDS = ['', '题', '讲解', '公式', '易错', '技巧', '术语', '数据', '页'];
   function chips() {
     var w = $('sx-types'); w.innerHTML = KINDS.map(function (k) { return '<button type="button" class="chip" aria-pressed="' + (k === TYPE) + '" data-k="' + k + '">' + (k || '全部') + '</button>'; }).join('');
     w.onclick = function (e) { var b = e.target.closest('button'); if (!b) return; TYPE = b.getAttribute('data-k'); chips(); run(); };
@@ -32,7 +32,7 @@
     var toks = norm(raw).split(/\s+/).filter(Boolean), R = [];
     IDX.forEach(function (e) { if (TYPE && e[0] !== TYPE) return; var nt = e.nt, ok = true, sc = 0;
       toks.forEach(function (t) { var a = e.ns.indexOf(t), b = nt.indexOf(t); if (a < 0 && b < 0) ok = false; else sc += (a >= 0 ? 10 : 0) + (b >= 0 ? 2 : 0) + (e.ns === t ? 20 : 0); });
-      if (ok) R.push([sc + (e[0] === '公式' || e[0] === '术语' ? 1 : 0), e]); });
+      if (ok) R.push([sc + (e[0] === '公式' || e[0] === '术语' || e[0] === '技巧' ? 1 : 0), e]); });
     var fuzzy = false;
     if (!R.length) { var B = bigr(toks.join('')); if (B.length) { fuzzy = true; IDX.forEach(function (e) { if (TYPE && e[0] !== TYPE) return; var h = 0; B.forEach(function (b) { if (e.ns.indexOf(b) >= 0 || e.nt.indexOf(b) >= 0) h++; }); var f = h / B.length; if (f >= 0.6) R.push([f, e]); }); } }
     R.sort(function (a, b) { return b[0] - a[0]; });
