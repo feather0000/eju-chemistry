@@ -33,4 +33,7 @@ for f in sorted(G.glob('topics/*/index.html')):
         if not ok: ebad+=1; print('UNBALANCED',f,e)
 print(f'{neq} chemical equations checked for element+charge balance, {ebad} unbalanced, {skip} partial fragments skipped')
 bad+=ebad
+import subprocess
+r=subprocess.run(['node','tests/test_chem.js'],capture_output=True,text=True);print(r.stdout.strip())
+if r.returncode: bad+=1
 print(f'{n} problems, {n-nc} numerically verified, {nc} conceptual, {bad} failures'); sys.exit(1 if bad else 0)
