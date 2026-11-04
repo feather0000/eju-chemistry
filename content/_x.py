@@ -139,7 +139,7 @@ def tips_sections(TOP, TIPS, weight):
     for s in order:
         w = weight.get(s, (0, ''))
         arts = ''.join(art(i, tp) for i, tp in enumerate(TIPS) if tp['slug'] == s)
-        secs.append(('t-' + s, f'{by[s]["n"]} {by[s]["zh"]}', f'{by[s]["ja"]}　{w[1]}', arts + f'<p class="more"><a href="../{s}/">→ 回到 {esc(by[s]["zh"])} 讲解与练习</a></p>'))
+        secs.append(('t-' + s, f'{by[s]["zh"]}', f'{by[s]["ja"]}　{w[1]}', arts + f'<p class="more"><a href="../{s}/">→ 回到 {esc(by[s]["zh"])} 讲解与练习</a></p>'))
     return secs
 def tip_backsec(slug, TIPS, base='../tips/'):
     T = [tp for tp in TIPS if tp['slug'] == slug or any(l[0] == slug for l in tp['links'])]
