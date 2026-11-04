@@ -5,7 +5,7 @@ for f in sorted(glob.glob('content/[0-9]*.py')):
     s=importlib.util.spec_from_file_location(os.path.basename(f)[:-3],f); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); TOPICS.append(m.TOPIC)
 MARK='①②③④⑤⑥'
 def page(t):
-    toc=[(sid,tt) for sid,tt,_,_ in t['sections']]+[('examples','例题'),('practice','练习题'),('terms','术语对照')]
+    toc=[(sid,tt) for sid,tt,_,_ in t['sections']]+([('examples','例题')] if t['examples'] else [])+([('practice','练习题')] if t['problems'] else [])+([('terms','术语对照')] if t['terms'] else [])
     tochtml=''.join(f'<li><a href="#{i}">{k+1} {tt}</a></li>' for k,(i,tt) in enumerate(toc))
     secs=''.join(f'<section id="{sid}"><h2>{tt}</h2><p class="jp-sub">{jp}</p>{body}</section>' for sid,tt,jp,body in t['sections'])
     ex=''.join(f'<article class="q"><div class="q-head"><b>例题 {k+1}　{e[0]}</b></div>{e[1]}<details><summary>解答</summary><div class="ans">{e[2]}</div></details></article>' for k,e in enumerate(t['examples']))
@@ -16,6 +16,9 @@ def page(t):
              f'<details><summary>解答</summary><div class="ans"><p><strong>正解：{MARK[p["ans"]]}</strong></p>{p["sol"]}</div></details></article>')
     terms=''.join(f'<tr><td>{a}</td><td>{b}</td><td class="kana">{c}</td></tr>' for a,b,c in t['terms'])
     hero=''.join(f'$${h}$$' for h in t['hero'])
+    EX=f'''<section id="examples"><h2>例题</h2><p class="jp-sub">例題</p>{ex}</section>''' if t['examples'] else ''
+    PR=f'''<section id="practice"><h2>练习题</h2><p class="jp-sub">練習問題（{len(t["problems"])} 题，选择题；原子量 H 1.0, C 12, N 14, O 16, Na 23, Mg 24, Al 27, S 32, Cl 35.5, K 39, Ca 40, Fe 56, Cu 63.5, Ag 108，另有说明除外）</p>{pr}</section>''' if t['problems'] else ''
+    TE=f'''<section id="terms"><h2>术语对照</h2><p class="jp-sub">用語</p><div class="tw"><table><tr><th>中文</th><th>日本語</th><th>读法</th></tr>{terms}</table></div></section>''' if t['terms'] else ''
     return f'''<!DOCTYPE html><html lang="zh-CN"><head><link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>EJU 理科 化学 · {t["n"]} {t["zh"]}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script><script defer src="../../assets/lazy-katex.js"></script>
@@ -23,9 +26,7 @@ def page(t):
 <a class="skip" href="#main">跳到正文</a><div id="cdn-note" hidden>公式库（KaTeX）未能加载，公式将显示为源码。请联网后刷新页面。</div>
 <header class="hero"><div class="hero-in"><div class="hero-text"><p class="back"><a href="../../">← 目录</a></p><p class="eyebrow">EJU 理科 化学 · {t["area"]} · {t["ja"]}</p><h1>{t["n"]} {t["zh"]}</h1><p class="lead">{t["lead"]}</p></div><div class="hero-formula" aria-hidden="true">{hero}</div></div></header>
 <div class="layout"><nav class="toc" aria-label="目录"><div style="flex:1;min-width:0"><p class="toc-title">目录</p><ol>{tochtml}</ol></div><button class="chip theme-btn" id="theme" type="button">深色</button></nav>
-<main id="main">{secs}<section id="examples"><h2>例题</h2><p class="jp-sub">例題</p>{ex}</section>
-<section id="practice"><h2>练习题</h2><p class="jp-sub">練習問題（{len(t["problems"])} 题，选择题；原子量 H 1.0, C 12, N 14, O 16, Na 23, Mg 24, Al 27, S 32, Cl 35.5, K 39, Ca 40, Fe 56, Cu 63.5, Ag 108，另有说明除外）</p>{pr}</section>
-<section id="terms"><h2>术语对照</h2><p class="jp-sub">用語</p><div class="tw"><table><tr><th>中文</th><th>日本語</th><th>读法</th></tr>{terms}</table></div></section>
+<main id="main">{secs}{EX}{PR}{TE}
 <footer>原创讲义与题目，非 JASSO 官方内容。按《日本留学試験 理科シラバス（化学）》编排。</footer></main></div>
 <script>(function(){{var b=document.getElementById('theme');function s(t){{document.documentElement.setAttribute('data-theme',t);b.textContent=t==='dark'?'浅色':'深色'}}s(document.documentElement.getAttribute('data-theme')||'light');b.onclick=function(){{var t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';s(t);try{{localStorage.setItem('eju-theme',t)}}catch(e){{}}}};
 var L=[].slice.call(document.querySelectorAll('nav.toc a'));if('IntersectionObserver'in window){{var io=new IntersectionObserver(function(es){{es.forEach(function(e){{if(e.isIntersecting)L.forEach(function(a){{a.classList.toggle('on',a.getAttribute('href')==='#'+e.target.id)}})}})}},{{rootMargin:'-20% 0px -70% 0px'}});document.querySelectorAll('main section').forEach(function(x){{io.observe(x)}})}}
@@ -33,7 +34,7 @@ window.addEventListener('load',function(){{if(!window.renderMathInElement){{docu
 <script src="../../assets/nav.js"></script></body></html>'''
 for t in TOPICS:
     os.makedirs(f'topics/{t["slug"]}',exist_ok=True); open(f'topics/{t["slug"]}/index.html','w').write(page(t))
-lis=''.join(f'<li><a href="topics/{t["slug"]}/"><span class="n">{t["n"]} · {t["area"]}</span><b>{t["zh"]}</b><small>{t["ja"]} · {len(t["problems"])} 题{(" · 过去问 "+str(t["bank"]["n"])+" 题 "+t["bank"]["stars"]) if t.get("bank") else ""}</small></a></li>' for t in TOPICS)
+lis=''.join(f'<li><a href="topics/{t["slug"]}/"><span class="n">{t["n"]} · {t["area"]}</span><b>{t["zh"]}</b><small>{t["ja"]} · {(str(len(t["problems"]))+" 题") if t["problems"] else "常用数据速查"}{(" · 过去问 "+str(t["bank"]["n"])+" 题 "+t["bank"]["stars"]) if t.get("bank") else ""}</small></a></li>' for t in TOPICS)
 RANKTBL=''.join(f'<tr><td><a href="topics/{t["slug"]}/">{t["n"]} {t["zh"]}</a></td><td>{" ".join(t["bank"]["codes"])}</td><td style="text-align:right">{t["bank"]["n"]}</td><td>{t["bank"]["stars"]}</td></tr>' for t in sorted([t for t in TOPICS if t.get('bank')],key=lambda t:-t['bank']['n']))
 open('index.html','w').write(f'''<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>EJU 理科 化学 全专题讲解</title>
 <style>:root{{--bg:#f8f5ee;--fg:#222;--card:#fffdf8;--line:#ddd6c6;--acc:#1e6b6b}}@media(prefers-color-scheme:dark){{:root{{--bg:#14171e;--fg:#ebe8e0;--card:#1c2029;--line:#363c49;--acc:#79cfcf}}}}
