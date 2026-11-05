@@ -84,7 +84,7 @@ def build_index(TOPICS, out='assets/search.json', skip=('search',)):
         if t['slug'] in skip: continue
         u = f'topics/{t["slug"]}/'
         I.append(['页', f'{t["n"]} {t["zh"]}', plain(t['ja'] + ' ' + t.get('lead', '')), u])
-        kind = {'formulas': '公式', 'pitfalls': '易错', 'constants': '数据', 'terms': '术语', 'tips': '技巧'}.get(t['slug'], '讲解')
+        kind = {'formulas': '公式', 'pitfalls': '易错', 'constants': '数据', 'terms': '术语', 'tips': '技巧', 'demos': '演示'}.get(t['slug'], '讲解')
         for sid, tt, ja, body in t['sections']:
             if t['slug'] == 'terms': continue
             if t['slug'] == 'tips':
@@ -157,3 +157,16 @@ def detex(s):
         x = x.replace('\\,', ' ').replace('{', '').replace('}', '').replace('^2', '²').replace('^3', '³').replace('^′', '′')
         return x
     return re.sub(r'\$\$?(.+?)\$\$?', f, s)
+
+# ---------- 互动演示 总览页 ----------
+def demo_hub(TOPICS, DEMOS):
+    by = {t['slug']: t for t in TOPICS}; secs = []; n = 0
+    for slug, ds in DEMOS.items():
+        if slug not in by or not ds: continue
+        t = by[slug]; n += len(ds)
+        body = ''.join(f'<div class="demo" data-demo="{k}" data-title="{zh}"><h3>{zh}</h3><p class="demo-desc">{jp}　{desc}</p></div>' for k, zh, jp, desc in ds)
+        secs.append(('d-' + slug, f'{t["zh"]}', t['ja'], body + f'<p class="more"><a href="../{slug}/#demo">→ 在 {esc(t["zh"])} 讲解页中查看（含例题与练习）</a></p>'))
+    nn = max(t['n'] for t in TOPICS) + 1
+    return dict(n=nn, slug='demos', area='互动', zh='互动演示', ja='インタラクティブ・デモ', sub=f'{n} 个可操作演示',
+                lead=f'本站全部 {n} 个互动演示集中在这一页（各专题讲解页里也有）。可拖动、调参数；离开画面自动暂停。',
+                hero=[], sections=secs, examples=[], problems=[], terms=[], demo_count=n)

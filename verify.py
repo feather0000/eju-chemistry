@@ -42,4 +42,11 @@ try:
     _s=importlib.util.spec_from_file_location('tips',_f); _m=importlib.util.module_from_spec(_s); _s.loader.exec_module(_m)
     from _x import tip_check; print(f'{len(_m.TIPS)} tips, {tip_check(_m.TIPS)} worked-example numeric checks, 0 failures')
 except AssertionError as e: bad+=1; print('FAIL tips', e)
+# DEMO-COUNT regression: demos must exist on topic pages and on the hub page
+import re as _re
+_tp=sum(open(f).read().count('data-demo="') for f in glob.glob('topics/*/index.html') if '/demos/' not in f)
+_hub=open('topics/demos/index.html').read().count('data-demo="')
+_js='src="../../assets/demos.js' in open('topics/demos/index.html').read()
+print(f'demos: topic pages {_tp}, hub {_hub}, expected 5, demos.js tag {_js}')
+if not (_tp==5 and _hub==5 and _js): bad+=1; print('FAIL demo count')
 print(f'{n} problems, {n-nc} numerically verified, {nc} conceptual, {bad} failures'); sys.exit(1 if bad else 0)

@@ -17,7 +17,7 @@
       if (hit) { out += '<mark>' + esc(s.substr(i, hit)) + '</mark>'; i += hit; } else { out += esc(s[i]); i++; } }
     return (a > 0 && p >= 0 ? '…' : '') + out + (raw.length > (p < 0 ? 110 : p + L + 70) ? '…' : '');
   }
-  var KINDS = ['', '题', '讲解', '公式', '易错', '技巧', '术语', '数据', '页'];
+  var KINDS = ['', '题', '讲解', '公式', '易错', '技巧', '演示', '术语', '数据', '页'];
   function chips() {
     var w = $('sx-types'); w.innerHTML = KINDS.map(function (k) { return '<button type="button" class="chip" aria-pressed="' + (k === TYPE) + '" data-k="' + k + '">' + (k || '全部') + '</button>'; }).join('');
     w.onclick = function (e) { var b = e.target.closest('button'); if (!b) return; TYPE = b.getAttribute('data-k'); chips(); run(); };
