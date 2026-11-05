@@ -108,7 +108,7 @@ def tip_check(TIPS):
     n = 0; ns = {k: getattr(_m, k) for k in dir(_m) if not k.startswith('_')}
     ns.update(comb=_m.comb, perm=_m.perm, Fr=__import__('fractions').Fraction)
     for i, tp in enumerate(TIPS):
-        for e, want in tp.get('chk', []):
+        for e, want in tp.get('chk', []) + tp.get('fchk', []):
             v = eval(e, ns); n += 1
             assert abs(float(v) - float(want)) <= 1e-9 + 0.006 * abs(float(want)), ('TIP CHECK FAIL', tp['t'], e, v, want)
     return n
