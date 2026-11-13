@@ -2,10 +2,10 @@ import importlib.util, glob, os, json, html, sys
 sys.path.insert(0,"content")
 open('assets/demos.js','w').write(''.join(open(f).read() for f in ['assets/chem.js']+sorted(glob.glob('demos_src/*.js'))))
 DEMOS={
-'acid-base':[('titr','中和滴定曲线','中和滴定曲線','切换强酸／弱酸，调浓度和 pK<sub>a</sub>，拖动点看 pH、中和点与指示剂变色范围。')],
-'gas':[('gas','理想气体 pV = nRT','理想気体の状態方程式','改变 n、温度，拖动等温线上的点改变体积。'),('vapor','密闭容器中的水与饱和蒸气压','飽和蒸気圧','判断水是否全部气化，读出实际的水蒸气分压。')],
-'equilibrium':[('lechat','勒夏特列原理：N₂O₄ ⇌ 2NO₂','ルシャトリエの原理','改变温度、总压，或在定容／定压下加入 Ar，看平衡移动与颜色。')],
-'electrolysis':[('faraday','法拉第定律计算器','ファラデーの法則','设定电流、时间与生成物，算出电子、物质的量、质量或气体体积。')],
+'acid-base':[('titr','中和滴定曲线','中和滴定曲線','切换强酸／弱酸，调浓度和 pK<sub>a</sub>，拖动点看 pH、中和点与指示剂变色范围；也可转动滴定管旋塞滴加 NaOH。')],
+'gas':[('gas','理想气体 pV = nRT','理想気体の状態方程式','改变 n、温度，拖动活塞或等温线上的点改变体积。'),('vapor','密闭容器中的水与饱和蒸气压','飽和蒸気圧','判断水是否全部气化，读出实际的水蒸气分压；可拖活塞或温度计。')],
+'equilibrium':[('lechat','勒夏特列原理：N₂O₄ ⇌ 2NO₂','ルシャトリエの原理','改变温度、总压，或在定容／定压下加入 Ar，看平衡移动与颜色；可推活塞、转 Ar 阀门。')],
+'electrolysis':[('faraday','法拉第定律计算器','ファラデーの法則','设定电流、时间与生成物，算出电子、物质的量、质量或气体体积；可拖电源旋钮调电流。')],
 }
 def demosec(t):
     ds=DEMOS.get(t['slug'],[])
@@ -47,7 +47,7 @@ def page(t):
     TE=f'''<section id="terms"><h2>术语对照</h2><p class="jp-sub">用語</p><div class="tw"><table><tr><th>中文</th><th>日本語</th><th>读法</th></tr>{terms}</table></div></section>''' if t['terms'] else ''
     return f'''<!DOCTYPE html><html lang="zh-CN"><head><link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>EJU 理科 化学 · {t["n"]} {t["zh"]}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script><script defer src="../../assets/lazy-katex.js"></script><script defer src="../../assets/demos.js?v=1"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script><script defer src="../../assets/lazy-katex.js"></script><script defer src="../../assets/demos.js?v=2"></script>
 <link rel="stylesheet" href="../../assets/site.css"><script>try{{var t=localStorage.getItem('eju-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t)}}catch(e){{}}</script></head><body>
 <a class="skip" href="#main">跳到正文</a><div id="cdn-note" hidden>公式库（KaTeX）未能加载，公式将显示为源码。请联网后刷新页面。</div>
 <header class="hero"><div class="hero-in"><div class="hero-text"><p class="back"><a href="../../">← 目录</a></p><p class="eyebrow">EJU 理科 化学 · {t["area"]} · {t["ja"]}</p><h1>{t["n"]} {t["zh"]}</h1><p class="lead">{t["lead"]}</p></div><div class="hero-formula" aria-hidden="true">{hero}</div></div></header>
