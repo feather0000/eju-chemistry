@@ -1,4 +1,4 @@
-import importlib.util, glob, os, json, html, sys
+import importlib.util, glob, os, json, html, sys, math
 sys.path.insert(0,"content")
 open('assets/demos.js','w').write(''.join(open(f).read() for f in ['assets/chem.js']+sorted(glob.glob('demos_src/*.js'))))
 DEMOS={
@@ -75,15 +75,137 @@ window.addEventListener('load',function(){{if(!window.renderMathInElement){{docu
 <script src="../../assets/nav.js"></script></body></html>'''
 for t in TOPICS:
     os.makedirs(f'topics/{t["slug"]}',exist_ok=True); open(f'topics/{t["slug"]}/index.html','w').write(page(t))
-lis=''.join(f'<li><a href="topics/{t["slug"]}/"><span class="n">{t["n"]} · {t["area"]}</span><b>{t["zh"]}</b><small>{t["ja"]} · {(str(len(t["problems"]))+" 题") if t["problems"] else t.get("sub","常用数据速查")}{(" · 过去问 "+str(t["bank"]["n"])+" 题 "+t["bank"]["stars"]) if t.get("bank") else ""}</small></a></li>' for t in TOPICS)
-RANKTBL=''.join(f'<tr><td><a href="topics/{t["slug"]}/">{t["n"]} {t["zh"]}</a></td><td>{" ".join(t["bank"]["codes"])}</td><td style="text-align:right">{t["bank"]["n"]}</td><td>{t["bank"]["stars"]}</td></tr>' for t in sorted([t for t in TOPICS if t.get('bank')],key=lambda t:-t['bank']['n']))
+# HOME：首页目次（像书的目录：左侧章号，右侧章名与专题，点线引到右侧的题数・过去问・星级）；目次下是知识导图（homemap.py 生成的内联 SVG），
+# 之后「附」列资料与工具，「表」是过去问频度表。样式在 site.css 末尾「化学站首页目次」块，只作用于 body.contents / #map
+CHAPTERS = [  # 章名、日文名、导图上的短名、提要、所含 area
+ ('物质的构成', '物質の構成', '构成', '纯净物与混合物的分离，原子的结构与电子配置，元素周期律，化学键与晶体。', ['物质的构成']),
+ ('物质的状态', '物質の状態', '状态', '物质的量与化学方程式的计算，状态变化与气体定律，溶液的浓度、溶解度与依数性。', ['物质的状态']),
+ ('化学反应', '化学反応', '反应', '反应焓与赫斯定律，反应速率与化学平衡，酸与碱，氧化还原、电池与电解。', ['化学反应']),
+ ('无机物质', '無機物質', '无机', '非金属与金属元素的单质和化合物：性质、制法、工业流程与离子检验。', ['无机物质']),
+ ('有机化合物', '有機化合物', '有机', '元素分析与分子式，烃与官能团，醇・醛・羧酸・酯，芳香族化合物。', ['有机化合物']),
+ ('高分子化合物', '高分子化合物', '高分子', '加成聚合与缩合聚合，合成高分子，糖类・蛋白质・油脂等天然高分子。', ['高分子化合物']),
+]
+def _stars(s): return f'<span class="stars" aria-label="重要度 {len(s)}/3">{s}</span>'
+def _entry(t, label=None, meta=None):
+    if meta is None:
+        meta = (f'{len(t["problems"])} 题' if t['problems'] else t.get('sub', '常用数据速查')) + (f'<span class="ct-sep"> · </span>过去问 {t["bank"]["n"]} {_stars(t["bank"]["stars"])}' if t.get('bank') else '')
+    return (f'<li><a href="topics/{t["slug"]}/"><span class="ct-n">{t["n"]:02d}</span><span class="ct-t"><span class="ct-zh">{label or t["zh"]}</span>'
+            f'<span class="ct-ja" lang="ja">{t["ja"]}</span></span><span class="ct-dots" aria-hidden="true"></span><span class="ct-m">{meta}</span></a></li>')
+_parts = []
+for k, (name, ja, _, intro, areas) in enumerate(CHAPTERS, 1):
+    ts = [t for t in TOPICS if t['area'] in areas]
+    nb = sum(t['bank']['n'] for t in ts if t.get('bank'))
+    _parts.append(f'<li class="ct-part"><p class="ct-no" aria-hidden="true">{k}</p><div class="ct-body">'
+                  f'<h3 id="ch-{k}"><span class="ct-vh">第 {k} 章　</span>{name}<span class="ct-chja" lang="ja">{ja}</span></h3>'
+                  f'<p class="ct-intro">{intro}<span class="ct-sum">{len(ts)} 个专题 · 过去问 {nb} 题</span></p>'
+                  f'<ol class="ct-list">{"".join(_entry(t) for t in ts)}</ol></div></li>')
+_D = next(t for t in TOPICS if t['slug'] == 'demos')
+_CH_AREAS = {a for c in CHAPTERS for a in c[4]}
+_appx = ''.join(_entry(t, f'互动演示总览（{t["demo_count"]} 个）', '全部演示一览') if t['slug'] == 'demos' else _entry(t)
+                for t in TOPICS if t['area'] not in _CH_AREAS)
+# MAP：知识导图。每章一色（site.css 的 --mp-1…--mp-6），一幅线描插图；每个专题一条代表式（取自本专题页抬头的式子或 17_formulas），
+# 记法见 homemap.fml：` 包起来的部分直立（化学式），其余拉丁字母为斜体变量
+XLINKS = [  # (slug, slug, 标签)
+ ('atom', 'periodic', '电子配置'), ('bonding', 'periodic', '电负性'), ('mole', 'gas', '摩尔体积'), ('mole', 'solution', '摩尔浓度'),
+ ('thermo', 'equilibrium', '平衡移动'), ('acid-base', 'equilibrium', '电离平衡'), ('redox', 'electrolysis', '电子授受'), ('organic', 'polymer', '单体与聚合'),
+]
+MAPF = {
+ 'matter': '`Ag^+ + Cl^- → AgCl`',            # 01_matter：Cl⁻ 的检出（沉淀）
+ 'atom': 'A = Z + N',                          # 02_atom 抬头：质量数 = 质子数 + 中子数
+ 'periodic': '`Na → Na^+ + e^-`',              # 03_periodic 抬头：电离
+ 'bonding': '`NH_3 + H^+ → NH_4^+`',           # 04_bonding 抬头：配位键
+ 'mole': 'n = m/M',                            # 05_mole 抬头 / 17_formulas
+ 'gas': 'pV = nRT',                            # 06_gas 抬头 / 17_formulas
+ 'solution': 'Δt = Km',                        # 07_solution 抬头：沸点升高・凝固点降低
+ 'thermo': 'Q = mcΔT',                         # 17_formulas：反应焓・热量测定
+ 'equilibrium': 'v = k[`A`]^a[`B`]^b',         # 17_formulas：反应速率式
+ 'acid-base': '`pH` = −log_{10}[`H`^+]',       # 10_acid_base 抬头 / 17_formulas
+ 'redox': '`Zn + Cu^{2+} → Zn^{2+} + Cu`',     # 11_redox 抬头：丹尼尔电池
+ 'electrolysis': 'n(`e`^−) = It/F',            # 12_electrolysis 抬头：法拉第定律
+ 'inorganic': '`N_2 + 3H_2 ⇌ 2NH_3`',          # 13_inorganic 抬头：哈伯法
+ 'organic': '`C`_n`H`_{2n+2}',                 # 14_organic 抬头：烷烃通式
+ 'polymer': '`–[CH_2–CH_2]`_n`–`',             # 15_polymer 抬头：聚乙烯
+}
+MAPL = {'thermo': '化学反应与热', 'mole': '物质的量', 'periodic': '元素周期律', 'equilibrium': '反应速率与平衡'}
+from homemap import ico, render
+def _icon_atom(x, y, s):  # 原子・粒子模型：原子核（质子・中子）+ 两层电子壳 + 电子
+    c = (x + s / 2, y + s / 2); e = lambda r, a: (c[0] + r * s * math.cos(math.radians(a)), c[1] + r * s * math.sin(math.radians(a)))
+    return ico(x, y, s, lambda P, R: f'<circle class="mp-thin" cx="{c[0]:.1f}" cy="{c[1]:.1f}" r="{R(.27)}"/><circle class="mp-thin" cx="{c[0]:.1f}" cy="{c[1]:.1f}" r="{R(.45)}"/>'
+               + ''.join(f'<circle cx="{c[0] + dx * s:.1f}" cy="{c[1] + dy * s:.1f}" r="{R(.045)}"/>' for dx, dy in ((-.04, -.03), (.045, -.02), (0, .045)))
+               + ''.join(f'<circle class="mp-dot" cx="{px:.1f}" cy="{py:.1f}" r="{R(.035)}"/>' for px, py in (e(.27, -40), e(.27, 140), e(.45, 20), e(.45, 110), e(.45, 200), e(.45, 290))))
+def _icon_beaker(x, y, s):  # 烧杯：杯口卷边、刻度线、液面，液中几粒溶质粒子
+    return ico(x, y, s, lambda P, R: f'<path d="M{P(.18, .14)}L{P(.24, .2)}L{P(.24, .88)}L{P(.76, .88)}L{P(.76, .14)}"/>'
+               f'<path class="mp-thin" d="M{P(.24, .52)}H{x + .76 * s:.1f}M{P(.24, .36)}H{x + .34 * s:.1f}M{P(.24, .44)}H{x + .3 * s:.1f}M{P(.24, .6)}H{x + .3 * s:.1f}M{P(.24, .68)}H{x + .34 * s:.1f}M{P(.24, .76)}H{x + .3 * s:.1f}"/>'
+               + ''.join(f'<circle class="mp-dot" cx="{x + u * s:.1f}" cy="{y + v * s:.1f}" r="{R(.024)}"/>' for u, v in ((.44, .62), (.58, .7), (.5, .8), (.66, .6), (.38, .76))))
+def _icon_burette(x, y, s):  # 滴定管 + 旋塞 + 液滴 + 锥形瓶
+    return ico(x, y, s, lambda P, R: f'<path d="M{P(.45, .02)}V{y + .46 * s:.1f}H{x + .55 * s:.1f}V{y + .02 * s:.1f}"/><path class="mp-thin" d="M{P(.5, .46)}V{y + .56 * s:.1f}M{P(.4, .5)}H{x + .6 * s:.1f}'
+               f'M{P(.45, .12)}H{x + .5 * s:.1f}M{P(.45, .22)}H{x + .5 * s:.1f}M{P(.45, .32)}H{x + .5 * s:.1f}"/><circle class="mp-dot" cx="{x + .5 * s:.1f}" cy="{y + .62 * s:.1f}" r="{R(.022)}"/>'
+               f'<path d="M{P(.43, .68)}L{P(.43, .76)}L{P(.24, .97)}H{x + .76 * s:.1f}L{P(.57, .76)}L{P(.57, .68)}"/><path class="mp-thin" d="M{P(.31, .89)}H{x + .69 * s:.1f}"/>')
+def _icon_crystal(x, y, s):  # 离子晶体（NaCl 型）的立方晶格：前后两面 + 交替的大小离子
+    a, b, o = .2, .62, .16
+    pts = [(a, b), (a + .42, b), (a + .42, b - .42), (a, b - .42)]
+    back = [(u + o, v - o) for u, v in pts]
+    return ico(x, y, s, lambda P, R: f'<path d="M{P(*pts[0])}' + ''.join(f'L{P(*q)}' for q in pts[1:]) + 'Z"/>'
+               f'<path class="mp-thin" d="M{P(*back[0])}' + ''.join(f'L{P(*q)}' for q in back[1:]) + 'Z' + ''.join(f'M{P(*p)}L{P(*q)}' for p, q in zip(pts, back)) + '"/>'
+               + ''.join(f'<circle class="{"mp-dot" if i % 2 else "mp-ion"}" cx="{x + u * s:.1f}" cy="{y + v * s:.1f}" r="{R(.05 if i % 2 == 0 else .03)}"/>' for i, (u, v) in enumerate(pts + back[1:2] + back[3:4] + back[2:3] + back[0:1]))
+               + f'<path class="mp-thin" d="M{P(.2, .84)}H{x + .78 * s:.1f}"/>')
+def _icon_benzene(x, y, s):  # 苯环：正六边形 + 内切圆（凯库勒式的简写），一个取代基
+    c = (.46, .52); h = [(c[0] + .3 * math.cos(math.radians(90 + 60 * i)), c[1] - .3 * math.sin(math.radians(90 + 60 * i))) for i in range(6)]
+    return ico(x, y, s, lambda P, R: f'<path d="M{P(*h[0])}' + ''.join(f'L{P(*q)}' for q in h[1:]) + 'Z"/>'
+               f'<circle class="mp-thin" cx="{x + c[0] * s:.1f}" cy="{y + c[1] * s:.1f}" r="{R(.18)}"/><path class="mp-thin" d="M{P(*h[0])}L{P(h[0][0], .06)}"/>'
+               f'<text class="mp-sub" x="{x + (h[0][0] + .06) * s:.1f}" y="{y + .13 * s:.1f}">OH</text>')
+def _icon_chain(x, y, s):  # 高分子：重复单元的折线链 + 方括号与 n
+    zz = [(.12 + .1 * i, .55 + (.1 if i % 2 else -.1)) for i in range(8)]
+    return ico(x, y, s, lambda P, R: f'<path d="M{P(*zz[0])}' + ''.join(f'L{P(*q)}' for q in zz[1:]) + '"/>'
+               f'<path class="mp-thin" d="M{P(.36, .3)}H{x + .31 * s:.1f}V{y + .8 * s:.1f}H{x + .36 * s:.1f}M{P(.62, .3)}H{x + .67 * s:.1f}V{y + .8 * s:.1f}H{x + .62 * s:.1f}"/>'
+               + ''.join(f'<circle class="mp-dot" cx="{x + u * s:.1f}" cy="{y + v * s:.1f}" r="{R(.028)}"/>' for u, v in zz[1:-1])
+               + f'<text class="mp-it" x="{x + .73 * s:.1f}" y="{y + .86 * s:.1f}">n</text>')
+_ICONS = [_icon_atom, _icon_beaker, _icon_burette, _icon_crystal, _icon_benzene, _icon_chain]
+_MC = [dict(name=name, ja=ja, short=sh, icon=_ICONS[k],
+            topics=[dict(slug=t['slug'], zh=t['zh'], ja=t['ja'], num=f'{t["n"]:02d}', label=MAPL.get(t['slug'], t['zh']), f=MAPF[t['slug']], href=f'topics/{t["slug"]}/')
+                    for t in TOPICS if t['area'] in areas and t['problems']])
+       for k, (name, ja, sh, _, areas) in enumerate(CHAPTERS)]
+MAPSVG, MAPLEGEND, MAPSTAT = render(dict(subject='化学', cap_ja='図　化学の体系', chapters=_MC, xlinks=XLINKS, start=140, MINSEC=2.0,
+    W=1160, H=1240, CX=580, CY=598, R0=58, R1=208, R2=348, NR=44, IS=58, FN=17, FF=16, FSUB=11, FL=15, BH=58, GAP=11, FCH=21))
+print('map:', MAPSTAT)
+RANKTBL=''.join(f'<tr><td><a href="topics/{t["slug"]}/">{t["n"]} {t["zh"]}</a></td><td>{" ".join(t["bank"]["codes"])}</td><td class="num">{t["bank"]["n"]}</td><td class="stars">{t["bank"]["stars"]}</td></tr>' for t in sorted([t for t in TOPICS if t.get('bank')],key=lambda t:-t['bank']['n']))
+_np = sum(len(t['problems']) for t in TOPICS); _nb = sum(t['bank']['n'] for t in TOPICS if t.get('bank')); _nt = sum(1 for t in TOPICS if t['problems'])
+_SITES = [('https://feather0000.github.io/eju-calculus/', 'EJU 数学コース2 网站'), ('https://feather0000.github.io/eju-physics/', 'EJU 理科 物理 网站'), ('https://feather0000.github.io/eju-biology/', 'EJU 理科 生物 网站')]
+PREFACE = ('这是按 EJU 理科（化学）大纲整理的中文讲义，分物质的构成、物质的状态、化学反应、无机、有机、高分子六章。建议先按章节读讲解和例题，再做练习；'
+           '计算题用到的公式、原子量和常数可以随时在附录里查。各页开头的出题频度来自 2005–2025 年试卷的统计，拿不准先看哪一章时可以参考它，也可以直接看本页最后的频度表。')
 open('index.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
-{HEADJS}<title>EJU 理科 化学 全专题讲解</title>{headmeta(SITE_NAME + " 全专题讲解", SITE_DESC, "", "")}
-<link rel="stylesheet" href="assets/site.css"></head><body class="home"><main>
-<div class="home-top"><p class="eyebrow">EJU 理科 · 化学</p><button class="chip theme-btn" id="theme" type="button">深色</button></div>
-<h1>EJU 理科 化学 全专题讲解</h1><p>按 JASSO《日本留学試験 理科シラバス（化学）》编排：物质的构成・物质的状态与变化・化学反应・无机物质・有机化合物・高分子。每页含要点讲解（中文 + 日语术语）、关键公式、原创例题和带解答的 EJU 风格选择题。</p>
-<p class="home-links"><a href="topics/demos/">🎛️ 互动演示总览（{next(t["demo_count"] for t in TOPICS if t["slug"]=="demos")} 个）</a><a href="topics/tips/">⚡ 快速解题技巧</a></p><ol>{lis}</ol><h2>过去问出题频度排行</h2><p>依据 2005–2025 年 38 份 EJU 试卷的按知识点分类原题册统计（各页开头有详细的「出题频度」表）。</p><div class="tw"><table><tr><th>专题页</th><th>原题册专题</th><th style="text-align:right">题数</th><th>重要度</th></tr>{RANKTBL}</table></div><p><a href="https://feather0000.github.io/eju-calculus/">→ EJU 数学コース2 网站</a>　<a href="https://feather0000.github.io/eju-physics/">→ EJU 理科 物理 网站</a>　<a href="https://feather0000.github.io/eju-biology/">→ EJU 理科 生物 网站</a></p></main>
-{TOGGLEJS}<script src="assets/nav.js"></script></body></html>''')
+{HEADJS}
+<title>EJU 理科 化学 全专题讲解</title>{headmeta(SITE_NAME + " 全专题讲解", SITE_DESC, "", "")}
+<link rel="stylesheet" href="assets/site.css"></head><body class="home contents">
+<a class="skip" href="#chapters">跳到目次</a>
+<div class="ct-wrap">
+<header class="ct-head">
+<div class="ct-top"><p class="ct-kicker">EJU 理科 · 化学</p><button class="chip theme-btn" id="theme" type="button">深色</button></div>
+<h1>化学<br>全专题讲解</h1>
+<div class="ct-preface"><p>{PREFACE}</p>
+<p class="ct-facts">共 {_nt} 个讲解专题、{_np} 道原创练习题、{_D["demo_count"]} 个互动演示；过去问 {_nb} 题已按专题归类。</p></div>
+</header>
+<main id="main">
+<section id="chapters" aria-labelledby="h-chapters"><h2 id="h-chapters" class="ct-label">目次<span lang="ja">もくじ</span></h2>
+<ol class="ct-parts">{"".join(_parts)}</ol></section>
+<section id="map" aria-labelledby="h-map"><div class="ct-part"><p class="ct-no ct-no-a" aria-hidden="true">图</p><div class="ct-body">
+<h2 id="h-map">知识导图<span class="ct-chja" lang="ja">知識マップ</span></h2>
+<p class="ct-intro">中心「化学」分出六章，每章一色，外圈是各章的讲解专题和一条代表式或化学方程式；虚线弧标出专题之间的重要联系。点节点即可进入对应页。</p></div>
+<figure class="mp"><p class="mp-hint" id="mp-hint">图较宽，可左右滑动查看。</p>
+<div class="mp-scroll" role="region" aria-label="知识导图" aria-describedby="mp-hint">{MAPSVG}</div>
+<figcaption id="mp-cap">化学知识导图：中心「化学」分出六章，各章外圈列讲解专题与代表式。虚线弧所示的联系：<ul class="mp-legend">{MAPLEGEND}</ul></figcaption></figure></div></section>
+<section id="appendix" aria-labelledby="h-appendix"><div class="ct-part"><p class="ct-no ct-no-a" aria-hidden="true">附</p><div class="ct-body">
+<h2 id="h-appendix">资料・速查・工具<span class="ct-chja" lang="ja">資料・ツール</span></h2>
+<p class="ct-intro">考前查原子量和常数、对公式与术语、找易错点；站内搜索覆盖题目、讲解、公式、术语与数据。</p>
+<ol class="ct-list">{_appx}</ol></div></div></section>
+<section id="ranking" aria-labelledby="h-rank"><div class="ct-part"><p class="ct-no ct-no-a" aria-hidden="true">表</p><div class="ct-body">
+<h2 id="h-rank">过去问出题频度<span class="ct-chja" lang="ja">出題頻度</span></h2>
+<p class="ct-intro">依据 2005–2025 年 38 份 EJU 试卷的按知识点分类原题册统计，按题数从多到少排列（各页开头另有详细的「出题频度」表）。</p>
+<div class="tw"><table><thead><tr><th scope="col">专题页</th><th scope="col">原题册专题</th><th scope="col" class="num">题数</th><th scope="col">重要度</th></tr></thead><tbody>{RANKTBL}</tbody></table></div></div></div></section>
+</main>
+<footer class="ct-foot"><p class="ct-sites">姊妹站：{"".join(f'<a href="{u}">{a}</a>' for u, a in _SITES)}</p><p>原创讲义与题目，非 JASSO 官方内容。按《日本留学試験 理科シラバス（化学）》编排。</p></footer>
+</div>
+{TOGGLEJS}<script src="assets/map.js"></script><script src="assets/nav.js"></script></body></html>''')
 # 404：GitHub Pages 对任意深度的不存在路径都返回它，所以资源用站点绝对路径
 open('404.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
 {HEADJS}<title>页面不存在 · {SITE_NAME}</title><meta name="robots" content="noindex"><link rel="icon" href="{SITE_PATH}assets/favicon.svg" type="image/svg+xml"><link rel="icon" href="{SITE_PATH}assets/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="{SITE_PATH}assets/apple-touch-icon.png">
