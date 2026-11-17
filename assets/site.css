@@ -720,4 +720,113 @@ body.contents {
 .contents .mp-legend li { margin: 0; break-inside: avoid; }
 @media (max-width: 62rem) { .contents .mp-hint { display: block; } .contents .mp-svg { min-width: 64rem; } }
 @media (prefers-reduced-motion: reduce) { #map .mp-d { transition: none; } }
+/* ==== 知识导图互动（四站同一份规则，接在首页目次块之后）
+   说明卡像图版上的图鉴注文：纸色、细线、衬线标题，没有阴影、发光或浮起。
+   连续动效（漂浮、闪烁、虚线流动）只在未开「减少动效」时启用，幅度都很小。 ==== */
+#map figure.mp { position: relative; }
+.contents .mp-scroll { overflow: hidden; touch-action: pan-y; overscroll-behavior: contain; }
+.contents .mp-svg { display: block; width: 100%; height: auto; min-width: 0; }
+@media (max-width: 62rem) { .contents .mp-svg { min-width: 0; } }
+.contents .mp-hint { display: block; margin: 0 0 var(--s-2); font-size: 13.5px; line-height: 1.7; color: var(--ink-3); }
+#map .mp-cam { transform-origin: 0 0; transform-box: view-box; }
+#map .mp-d { transition: opacity 140ms linear; }
+
+/* 漂浮：由 map.js 给每个节点写入 --mp-t / --mp-dx / --mp-dy */
+#map.mp-live a.mp-tn, #map.mp-live a.mp-chn {
+  animation: mp-drift var(--mp-t, 14s) ease-in-out infinite alternate;
+}
+@keyframes mp-drift {
+  from { transform: translate(0, 0); }
+  to { transform: translate(var(--mp-dx, 2px), var(--mp-dy, -2px)); }
+}
+
+/* 星点与轨道上的装饰点轻微闪烁 */
+#map.mp-live .mp-star { animation: mp-twinkle 3.8s ease-in-out infinite alternate; }
+#map.mp-live .mp-sk { fill: var(--ink-3); stroke: none; opacity: .35; animation: mp-twinkle 5.6s ease-in-out infinite alternate; }
+@keyframes mp-twinkle {
+  from { opacity: .28; }
+  to { opacity: .85; }
+}
+#map.mp-live .mp-star { /* 专题星点本色更实，只在透明度上闪 */
+  /* fill 仍由章色决定；opacity 叠加在其上 */
+}
+
+/* 联系弧：沿已有虚线缓慢流动 */
+#map.mp-live .mp-xl path { animation: mp-flow 9s linear infinite; }
+@keyframes mp-flow { to { stroke-dashoffset: -36; } }
+
+/* 当前聚焦的节点：加粗框线，不用发光 */
+#map a.mp-now .mp-box, #map a.mp-now .mp-nb { stroke-width: 2.2; }
+#map a.mp-now .mp-t { fill: var(--c); }
+
+/* 图鉴式说明卡 */
+#map .mp-card {
+  margin: var(--s-4) 0 0;
+  padding: var(--s-4) var(--s-5) var(--s-4);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-top-width: 2px;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: 42em;
+}
+#map .mp-card[hidden] { display: none !important; }
+#map .mp-card-k { margin: 0; font-size: 12.5px; letter-spacing: .12em; color: var(--ink-3); }
+#map .mp-card-h {
+  margin: var(--s-2) 0 0;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1.35;
+  letter-spacing: .06em;
+  color: var(--ink);
+}
+#map .mp-card-ja { margin: 2px 0 0; font-family: var(--sans-jp); font-size: 13.5px; color: var(--ink-3); }
+#map .mp-card-ja[hidden] { display: none; }
+#map .mp-card-intro { margin: var(--s-3) 0 0; font-size: 15px; line-height: 1.8; color: var(--ink-2); }
+#map .mp-card-acts { display: flex; flex-wrap: wrap; gap: var(--s-3) var(--s-5); align-items: center; margin: var(--s-4) 0 0; }
+#map .mp-card-go { font-size: 15px; }
+#map .mp-card-back {
+  font: inherit;
+  font-size: 14.5px;
+  min-height: 44px;
+  padding: 0 var(--s-4);
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  cursor: pointer;
+}
+#map .mp-card-back:hover { color: var(--ink); border-color: var(--ink-3); }
+#map .mp-card-back:active { transform: none; }
+
+
+#map a.mp-now { animation: none !important; }
+#map a.mp-tn:focus-visible .mp-box,
+#map a.mp-tn:focus-visible .mp-nb,
+#map a.mp-chn:focus-visible .mp-nb,
+#map a.mp-chn:focus-visible .mp-box,
+#map a.mp-root:focus-visible circle {
+  stroke: var(--ink);
+  stroke-width: 2.2;
+  outline: none;
+}
+#map a.mp-tn:focus-visible,
+#map a.mp-chn:focus-visible,
+#map a.mp-root:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 3px;
+}
+#map .mp-card-back:focus-visible,
+#map .mp-card-go:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  #map .mp-cam { transition: none !important; }
+  #map.mp-live a.mp-tn, #map.mp-live a.mp-chn,
+  #map.mp-live .mp-star, #map.mp-live .mp-sk,
+  #map.mp-live .mp-xl path { animation: none !important; }
+  #map .mp-d { transition: none; }
+}
+/* ==== /知识导图互动 ==== */
 /* ==== /化学站首页目次 ==== */

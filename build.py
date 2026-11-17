@@ -168,6 +168,17 @@ _MC = [dict(name=name, ja=ja, short=sh, icon=_ICONS[k],
 MAPSVG, MAPLEGEND, MAPSTAT = render(dict(subject='化学', cap_ja='図　化学の体系', chapters=_MC, xlinks=XLINKS, start=140, MINSEC=2.0,
     W=1160, H=1240, CX=580, CY=598, R0=58, R1=208, R2=348, NR=44, IS=58, FN=17, FF=16, FSUB=11, FL=15, BH=58, GAP=11, FCH=21))
 print('map:', MAPSTAT)
+def _mapdata():
+    chs, tps = {}, {}
+    for k, (name, ja, _sh, intro, areas) in enumerate(CHAPTERS, 1):
+        chs[str(k)] = {'zh': name, 'ja': ja, 'intro': intro, 'href': f'#ch-{k}'}
+        for top in TOPICS:
+            if top.get('area') in areas and top.get('problems'):
+                tps[top['slug']] = {'zh': top['zh'], 'ja': top['ja'], 'intro': top.get('lead') or '', 'href': f'topics/{top["slug"]}/', 'ch': str(k)}
+    s = json.dumps({'subject': '化学', 'chapters': chs, 'topics': tps}, ensure_ascii=False, separators=(',', ':'))
+    return s.replace('<', '\\u003c')
+MAPDATA = _mapdata()
+
 RANKTBL=''.join(f'<tr><td><a href="topics/{t["slug"]}/">{t["n"]} {t["zh"]}</a></td><td>{" ".join(t["bank"]["codes"])}</td><td class="num">{t["bank"]["n"]}</td><td class="stars">{t["bank"]["stars"]}</td></tr>' for t in sorted([t for t in TOPICS if t.get('bank')],key=lambda t:-t['bank']['n']))
 _np = sum(len(t['problems']) for t in TOPICS); _nb = sum(t['bank']['n'] for t in TOPICS if t.get('bank')); _nt = sum(1 for t in TOPICS if t['problems'])
 _SITES = [('https://feather0000.github.io/eju-calculus/', 'EJU 数学コース2 网站'), ('https://feather0000.github.io/eju-physics/', 'EJU 理科 物理 网站'), ('https://feather0000.github.io/eju-biology/', 'EJU 理科 生物 网站')]
@@ -190,10 +201,10 @@ open('index.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="
 <ol class="ct-parts">{"".join(_parts)}</ol></section>
 <section id="map" aria-labelledby="h-map"><div class="ct-part"><p class="ct-no ct-no-a" aria-hidden="true">图</p><div class="ct-body">
 <h2 id="h-map">知识导图<span class="ct-chja" lang="ja">知識マップ</span></h2>
-<p class="ct-intro">中心「化学」分出六章，每章一色，外圈是各章的讲解专题和一条代表式或化学方程式；虚线弧标出专题之间的重要联系。点节点即可进入对应页。</p></div>
-<figure class="mp"><p class="mp-hint" id="mp-hint">图较宽，可左右滑动查看。</p>
+<p class="ct-intro">中心「化学」分出六章，每章一色，外圈是各章的讲解专题和一条代表式或化学方程式；虚线弧标出专题之间的重要联系。点章节或专题可放大查看简介，再从说明卡进入对应页。</p></div>
+<figure class="mp"><p class="mp-hint" id="mp-hint">点节点可放大查看简介。电脑上按住 Ctrl 或 ⌘ 滚动缩放；点进图中后可拖动。触屏用双指缩放。Esc 或「返回」还原。</p>
 <div class="mp-scroll" role="region" aria-label="知识导图" aria-describedby="mp-hint">{MAPSVG}</div>
-<figcaption id="mp-cap">化学知识导图：中心「化学」分出六章，各章外圈列讲解专题与代表式。虚线弧所示的联系：<ul class="mp-legend">{MAPLEGEND}</ul></figcaption></figure></div></section>
+<figcaption id="mp-cap">化学知识导图：中心「化学」分出六章，各章外圈列讲解专题与代表式。虚线弧所示的联系：<ul class="mp-legend">{MAPLEGEND}</ul></figcaption></figure><script type="application/json" id="mp-data">{MAPDATA}</script></div></section>
 <section id="appendix" aria-labelledby="h-appendix"><div class="ct-part"><p class="ct-no ct-no-a" aria-hidden="true">附</p><div class="ct-body">
 <h2 id="h-appendix">资料・速查・工具<span class="ct-chja" lang="ja">資料・ツール</span></h2>
 <p class="ct-intro">考前查原子量和常数、对公式与术语、找易错点；站内搜索覆盖题目、讲解、公式、术语与数据。</p>
