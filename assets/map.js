@@ -96,7 +96,7 @@
   function applyCam(animate) {
     if (camAnim) { cancelAnimationFrame(camAnim); camAnim = null; }
     var to = { k: st.k, tx: st.tx, ty: st.ty };
-    if (!animate || reduced()) { setCam(to.k, to.tx, to.ty); return; }
+    if (!animate || reduced()) { setCam(to.k, to.tx, to.ty); updateLOD(); return; }
     var from = cam._cur || { k: 1, tx: 0, ty: 0 };
     var t0 = performance.now(), dur = 500;
     (function tick(now) {
@@ -104,7 +104,7 @@
       var e = easeInOut(u);
       setCam(from.k + (to.k - from.k) * e, from.tx + (to.tx - from.tx) * e, from.ty + (to.ty - from.ty) * e);
       if (u < 1) camAnim = requestAnimationFrame(tick);
-      else { camAnim = null; setCam(to.k, to.tx, to.ty); }
+      else { camAnim = null; setCam(to.k, to.tx, to.ty); updateLOD(); }
     })(t0);
   }
 
@@ -133,6 +133,7 @@
     st.k = k2;
     applyCam(false);
     if (st.k > 1.02) setEngaged(true);
+    updateLOD();
   }
 
   function setEngaged(on) {
@@ -147,7 +148,7 @@
     if (!el || !el.closest) return null;
     var a = el.closest('a');
     if (!a || !svg.contains(a)) return null;
-    if (a.classList.contains('mp-tn') || a.classList.contains('mp-chn')) return a;
+    if (a.classList.contains('mp-tn') || a.classList.contains('mp-chn') || a.classList.contains('mp-sub')) return a;
     return null;
   }
 
@@ -155,7 +156,28 @@
     if (!a) return null;
     var slug = a.getAttribute('data-slug');
     var ch = a.getAttribute('data-ch');
-    if (slug && data.topics && data.topics[slug]) {
+    if (a.classList.contains('mp-sub') && slug && data.topics && data.topics[slug]) {
+      var sid = a.getAttribute('data-sid');
+      var kids = data.topics[slug].children || [];
+      var kid = null;
+      for (var i = 0; i < kids.length; i++) {
+        if ((sid && kids[i].id === sid) || (!sid && kids[i].more && kids[i].zh === (a.getAttribute('data-title') || ''))) { kid = kids[i]; break; }
+      }
+      if (!kid && a.getAttribute('data-title')) {
+        for (var j = 0; j < kids.length; j++) if (kids[j].zh === a.getAttribute('data-title')) { kid = kids[j]; break; }
+      }
+      var parent = data.topics[slug];
+      var chd0 = (parent.ch && data.chapters[parent.ch]) || (ch && data.chapters[ch]) || {};
+      if (kid) {
+        return {
+          k: (parent.zh || '专题') + (kid.more ? '' : ' · 小节'),
+          zh: kid.zh || '', ja: kid.ja || '', intro: kid.intro || '',
+          href: kid.href || a.getAttribute('href'),
+          go: kid.more ? '打开专题' : '打开该小节'
+        };
+      }
+    }
+    if (slug && data.topics && data.topics[slug] && !a.classList.contains('mp-sub')) {
       var t = data.topics[slug];
       var chd = (t.ch && data.chapters[t.ch]) || (ch && data.chapters[ch]) || {};
       return {
@@ -200,37 +222,410 @@
     card.setAttribute('hidden', '');
   }
 
+
+  /* ---------- 第三层小节（专题聚焦或放大越过阈值时出现） ---------- */
+  var LOD_K = 1.65;
+  var shownSlug = null;
+
+  function topicCenter(a) {
+    var star = a.querySelector('.mp-star');
+    if (star && star.getAttribute('cx')) return { x: +star.getAttribute('cx'), y: +star.getAttribute('cy') };
+    var b = a.getBBox();
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  }
+  function mapCenter() {
+    var r = svg.querySelector('a.mp-root circle, a.mp-root');
+    if (r && r.getAttribute && r.getAttribute('cx')) return { x: +r.getAttribute('cx'), y: +r.getAttribute('cy') };
+    if (r && r.getBBox) { var b = r.getBBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }
+    var V = vb(); return { x: V.x + V.w / 2, y: V.y + V.h / 2 };
+  }
+  function viewCenterUser() {
+    var V = vb();
+    return { x: (V.x + V.w / 2 - st.tx) / st.k, y: (V.y + V.h / 2 - st.ty) / st.k };
+  }
+  function tw(s, fs) {
+    s = (s || '') + '';
+    var w = 0;
+    for (var i = 0; i < s.length; i++) {
+      var code = s.charCodeAt(i);
+      w += (code > 0x2FF) ? fs * 1.02 : fs * 0.62;
+    }
+    return w;
+  }
+
+  function taperPath(x0, y0, x1, y1, w0, w1) {
+    var ang = Math.atan2(y1 - y0, x1 - x0);
+    var nx = Math.cos(ang + Math.PI / 2), ny = Math.sin(ang + Math.PI / 2);
+    function p(x, y) { return x.toFixed(1) + ' ' + y.toFixed(1); }
+    return 'M' + p(x0 + nx * w0, y0 + ny * w0) +
+      'L' + p(x0 - nx * w0, y0 - ny * w0) +
+      'L' + p(x1 - nx * w1, y1 - ny * w1) +
+      'L' + p(x1 + nx * w1, y1 + ny * w1) + 'Z';
+  }
+
+  function kidsFor(slug) {
+    return (data.topics && data.topics[slug] && data.topics[slug].children) || [];
+  }
+
+  function placeKids(parent) {
+    var slug = parent.getAttribute('data-slug');
+    var kids = kidsFor(slug);
+    var g = cam.querySelector('.mp-subs');
+    if (g) g.parentNode.removeChild(g);
+    shownSlug = null;
+    if (!kids.length) return null;
+    g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'mp-subs mp-c' + (parent.getAttribute('data-ch') || ''));
+    g.setAttribute('data-slug', slug);
+    cam.appendChild(g);
+
+    var boxEl = parent.querySelector('.mp-box');
+    var pb, c;
+    if (boxEl) {
+      var bx = +boxEl.getAttribute('x'), by = +boxEl.getAttribute('y');
+      var bw0 = +boxEl.getAttribute('width'), bh0 = +boxEl.getAttribute('height');
+      pb = { x: bx, y: by, width: bw0, height: bh0 };
+      c = { x: bx + bw0 / 2, y: by + bh0 / 2 };
+    } else {
+      var bb = parent.getBBox();
+      pb = { x: bb.x, y: bb.y, width: bb.width, height: bb.height };
+      c = { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 };
+    }
+    var star = topicCenter(parent);
+    var o = mapCenter();
+    var heading = Math.atan2(c.y - o.y, c.x - o.x);
+    var ch = parent.getAttribute('data-ch') || '';
+    function fitText(s, size, maxW) {
+      s = (s || '') + '';
+      if (!s) return '';
+      if (tw(s, size) <= maxW) return s;
+      var t = s;
+      while (t.length > 1 && tw(t + '…', size) > maxW) t = t.slice(0, -1);
+      return t + '…';
+    }
+    var MAXW = 168;
+    var labels = kids.map(function (k) {
+      var f = fitText(k.f, 10, MAXW - 20);
+      var w = Math.max(tw(k.zh, 11.4), tw(f, 10), 80) + 20;
+      return { f: f, w: Math.min(Math.max(w, 88), MAXW), h: f ? 44 : 32 };
+    });
+    var boxes = labels;
+    var V = vb();
+    var mL = V.x + 48, mR = V.x + V.w - 48, mT = V.y + 48, mB = V.y + V.h - 80;
+    var clear = Math.max(pb.width, pb.height) / 2 + 22;
+    var rOff = clear + 36;
+    function anglesFor(idxs, h, r, boxsrc) {
+      var n = idxs.length, angs = [];
+      if (n === 1) return [h];
+      var need = 0, sum = 0;
+      for (var i = 0; i < n; i++) { need += boxsrc[idxs[i]].w + 12; sum += boxsrc[idxs[i]].w; }
+      var sp = Math.min(need / Math.max(r, 1), 2.7);
+      var acc = 0;
+      for (var k = 0; k < n; k++) {
+        acc += boxsrc[idxs[k]].w / 2;
+        angs.push(h - sp / 2 + sp * (acc / sum));
+        acc += boxsrc[idxs[k]].w / 2;
+      }
+      return angs;
+    }
+    function layout(h, r) {
+      var n = kids.length, idxs = [];
+      for (var i = 0; i < n; i++) idxs.push(i);
+      var angs = anglesFor(idxs, h, r, boxes);
+      var pts = [];
+      for (var i2 = 0; i2 < n; i2++) {
+        pts.push({
+          x: c.x + r * Math.cos(angs[i2]),
+          y: c.y + r * Math.sin(angs[i2]),
+          a: angs[i2], w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
+        });
+      }
+      return { pts: pts };
+    }
+    function layout2(h, r, gap) {
+      var n = kids.length, n0 = Math.ceil(n / 2);
+      var row0 = [], row1 = [];
+      for (var i = 0; i < n; i++) (i < n0 ? row0 : row1).push(i);
+      var pts = new Array(n);
+      function put(idxs, rr) {
+        var angs = anglesFor(idxs, h, rr, boxes);
+        for (var j = 0; j < idxs.length; j++) {
+          var i2 = idxs[j];
+          pts[i2] = {
+            x: c.x + rr * Math.cos(angs[j]),
+            y: c.y + rr * Math.sin(angs[j]),
+            a: angs[j], w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
+          };
+        }
+      }
+      put(row0, r);
+      put(row1, r + (gap || 56));
+      return { pts: pts };
+    }
+
+    function inPlate(pts) {
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (p.x - p.w / 2 < mL || p.x + p.w / 2 > mR || p.y - p.h / 2 < mT || p.y + p.h / 2 > mB) return false;
+      }
+      return true;
+    }
+    var others = [];
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (el) {
+      if (el === parent) return;
+      try {
+        var b = el.getBBox();
+        others.push({ x: b.x, y: b.y, width: b.width, height: b.height });
+      } catch (err) {}
+    });
+    function hitsRect(p, r, pad) {
+      return !(p.x + p.w / 2 < r.x - pad || p.x - p.w / 2 > r.x + r.width + pad ||
+               p.y + p.h / 2 < r.y - pad || p.y - p.h / 2 > r.y + r.height + pad);
+    }
+    function overlap(pts) {
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (hitsRect(p, pb, 10)) return true;
+        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 12)) return true;
+      }
+      for (var i2 = 0; i2 < pts.length; i2++) for (var j = i2 + 1; j < pts.length; j++) {
+        var dx = Math.abs(pts[i2].x - pts[j].x), dy = Math.abs(pts[i2].y - pts[j].y);
+        if (dx < (pts[i2].w + pts[j].w) / 2 + 8 && dy < (pts[i2].h + pts[j].h) / 2 + 8) return true;
+      }
+      return false;
+    }
+    var fan = heading, chosen = null;
+    var needW = 0;
+    for (var ni = 0; ni < boxes.length; ni++) needW += boxes[ni].w + 12;
+    var rMin = kids.length <= 1 ? rOff : Math.max(rOff, needW / 2.7);
+    var turns = [0, 0.35, -0.35, 0.6, -0.6, 0.9, -0.9, 1.15, -1.15, 1.45, -1.45, 1.75, -1.75, 3.1416];
+    function tryAt(fn, h, r) {
+      var L = fn(h, r);
+      if (!overlap(L.pts) && inPlate(L.pts)) { chosen = L; fan = h; return true; }
+      return false;
+    }
+    for (var t = 0; t < turns.length && !chosen; t++) {
+      for (var step = 0; step < 18 && !chosen; step++) {
+        tryAt(layout, heading + turns[t], rMin + step * 20);
+      }
+    }
+    if (!chosen) {
+      for (var t2 = 0; t2 < turns.length && !chosen; t2++) {
+        for (var step2 = 0; step2 < 14 && !chosen; step2++) {
+          var L2 = layout2(heading + turns[t2], Math.max(rOff, rMin * 0.62) + step2 * 18, 58);
+          if (!overlap(L2.pts) && inPlate(L2.pts)) { chosen = L2; fan = heading + turns[t2]; }
+        }
+      }
+    }
+    if (!chosen) {
+      function layoutGreedy() {
+        var pts = [];
+        var dA = 0.16;
+        for (var i = 0; i < kids.length; i++) {
+          var found = null;
+          for (var step = 0; step < 24 && !found; step++) {
+            var r = rOff + 24 + step * 16;
+            var nAng = Math.floor((2 * Math.PI) / dA);
+            for (var k = 0; k < nAng && !found; k++) {
+              var sign = (k % 2) ? 1 : -1;
+              var off = Math.ceil(k / 2) * dA;
+              var ang = heading + sign * off;
+              var p = { x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang), a: ang, w: boxes[i].w, h: boxes[i].h, f: boxes[i].f };
+              if (!overlap(pts.concat([p])) && inPlate([p])) found = p;
+            }
+          }
+          if (!found) {
+            var ang0 = heading + (i - (kids.length - 1) / 2) * 0.45;
+            var rr = Math.max(rMin, rOff + 80);
+            found = { x: c.x + rr * Math.cos(ang0), y: c.y + rr * Math.sin(ang0), a: ang0, w: boxes[i].w, h: boxes[i].h, f: boxes[i].f };
+          }
+          pts.push(found);
+        }
+        return { pts: pts };
+      }
+      var Lg = layoutGreedy();
+      var allOk = !overlap(Lg.pts) && inPlate(Lg.pts);
+      chosen = allOk || !chosen ? Lg : chosen;
+      if (!allOk) chosen = Lg;
+    }
+    if (!chosen) { chosen = layout(heading + 3.1416, Math.max(rMin, rOff + 80)); }
+
+    kids.forEach(function (kid, i) {
+      var pt = chosen.pts[i];
+      var x = pt.x, y = pt.y, bw = pt.w, bh = pt.h;
+      var bx = x - bw / 2, by = y - bh / 2;
+      var a = document.createElementNS(NS, 'a');
+      a.setAttribute('class', 'mp-d mp-sub mp-c' + ch);
+      a.setAttribute('data-ch', ch);
+      a.setAttribute('data-slug', slug);
+      if (kid.id) a.setAttribute('data-sid', kid.id);
+      a.setAttribute('data-title', kid.zh);
+      a.setAttribute('href', kid.href || ('topics/' + slug + '/'));
+      if (kid.more) a.setAttribute('data-more', '1');
+      var lab = kid.zh + (kid.f ? '：' + kid.f : '');
+      a.setAttribute('aria-label', lab);
+      a.setAttribute('tabindex', '-1');
+      var dispF = pt.f || '';
+      var hitW = Math.max(bw, 80), hitH = Math.max(bh, 64);
+      /* 树枝从父框外缘接到子框内侧，不画进父框，也不放进 <a> */
+      function rayEdge(cx0, cy0, hw, hh, ang) {
+        var dx = Math.cos(ang), dy = Math.sin(ang);
+        var tx = !dx ? 1e9 : hw / Math.abs(dx);
+        var ty = !dy ? 1e9 : hh / Math.abs(dy);
+        var tt = Math.min(tx, ty);
+        return { x: cx0 + tt * dx, y: cy0 + tt * dy };
+      }
+      var p0 = rayEdge(c.x, c.y, pb.width / 2 + 1, pb.height / 2 + 1, pt.a);
+      var back = Math.atan2(c.y - y, c.x - x);
+      var p1 = rayEdge(x, y, bw / 2 + 1, bh / 2 + 1, back);
+      var x0 = p0.x, y0 = p0.y, innerX = p1.x, innerY = p1.y;
+      var br = document.createElementNS(NS, 'path');
+      br.setAttribute('class', 'mp-subbr');
+      br.setAttribute('d', taperPath(x0, y0, innerX, innerY, 1.8, 0.4));
+      br.setAttribute('aria-hidden', 'true');
+      br.setAttribute('pointer-events', 'none');
+      g.insertBefore(br, g.firstChild);
+      var hit = document.createElementNS(NS, 'rect');
+      hit.setAttribute('class', 'mp-hit');
+      hit.setAttribute('x', (x - hitW / 2).toFixed(1));
+      hit.setAttribute('y', (y - hitH / 2).toFixed(1));
+      hit.setAttribute('width', hitW.toFixed(1));
+      hit.setAttribute('height', hitH.toFixed(1));
+      var rect = document.createElementNS(NS, 'rect');
+      rect.setAttribute('class', 'mp-box');
+      rect.setAttribute('x', bx.toFixed(1));
+      rect.setAttribute('y', by.toFixed(1));
+      rect.setAttribute('width', bw.toFixed(1));
+      rect.setAttribute('height', bh.toFixed(1));
+      var title = document.createElementNS(NS, 'text');
+      title.setAttribute('class', 'mp-t');
+      title.setAttribute('x', x.toFixed(1));
+      title.setAttribute('y', (y + (dispF ? -4 : 4)).toFixed(1));
+      title.setAttribute('text-anchor', 'middle');
+      title.textContent = kid.zh;
+      a.appendChild(hit); a.appendChild(rect); a.appendChild(title);
+      if (dispF) {
+        var ft = document.createElementNS(NS, 'text');
+        ft.setAttribute('class', 'mp-f');
+        ft.setAttribute('x', x.toFixed(1));
+        ft.setAttribute('y', (y + 13).toFixed(1));
+        ft.setAttribute('text-anchor', 'middle');
+        ft.textContent = dispF;
+        a.appendChild(ft);
+      }
+      g.appendChild(a);
+    });
+    shownSlug = slug;
+    return g;
+  }
+
+  function setKidsVisible(on) {
+    root.classList.toggle('mp-kids-on', !!on);
+    var g = cam.querySelector('.mp-subs');
+    if (!g) return;
+    var nodes = g.querySelectorAll('a.mp-sub');
+    Array.prototype.forEach.call(nodes, function (n) {
+      n.setAttribute('tabindex', on ? '0' : '-1');
+      if (on) n.classList.add('mp-in');
+      else n.classList.remove('mp-in');
+    });
+    if (reduced()) {
+      /* 无动画，直接显隐 */
+    }
+  }
+
+  function hideKids() {
+    setKidsVisible(false);
+    var g = cam.querySelector('.mp-subs');
+    if (g) {
+      /* 保留节点直到下次放置，避免切走时闪断；下次 placeKids 会替换 */
+      if (!focused || !focused.classList.contains('mp-sub')) {
+        /* keep until replaced */
+      }
+    }
+    if (!focused || (!focused.classList.contains('mp-tn') && !focused.classList.contains('mp-sub'))) {
+      if (g && g.parentNode) g.parentNode.removeChild(g);
+      shownSlug = null;
+    }
+  }
+
+  function unionBox(el) {
+    var b = el.getBBox();
+    var g = cam.querySelector('.mp-subs');
+    if (!g || !root.classList.contains('mp-kids-on')) return b;
+    var gb = g.getBBox();
+    var x = Math.min(b.x, gb.x), y = Math.min(b.y, gb.y);
+    var r = Math.max(b.x + b.width, gb.x + gb.width), bo = Math.max(b.y + b.height, gb.y + gb.height);
+    return { x: x, y: y, width: r - x, height: bo - y };
+  }
+
+  function revealForTopic(a, opts) {
+    opts = opts || {};
+    if (!a || !a.classList.contains('mp-tn')) return;
+    var slug = a.getAttribute('data-slug');
+    if (shownSlug !== slug) placeKids(a);
+    setKidsVisible(true);
+  }
+
+  function nearestTopic(pt, maxd) {
+    var best = null, bd = maxd;
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn'), function (a) {
+      var c = topicCenter(a);
+      var d = Math.hypot(c.x - pt.x, c.y - pt.y);
+      if (d < bd) { bd = d; best = a; }
+    });
+    return best;
+  }
+
+  function updateLOD() {
+    if (focused && (focused.classList.contains('mp-tn') || focused.classList.contains('mp-sub'))) return;
+    if (st.k >= LOD_K) {
+      var a = nearestTopic(viewCenterUser(), 160);
+      if (a && kidsFor(a.getAttribute('data-slug')).length) {
+        revealForTopic(a);
+        return;
+      }
+    }
+    hideKids();
+  }
+
   /* 聚焦：把节点放到图板偏上的中央，为下方说明卡留空，缩放限制在 1.8–3.2 */
   function focusNode(a, opts) {
     if (!a) return;
     opts = opts || {};
-    var box = a.getBBox();
+    var topic = a.classList.contains('mp-sub')
+      ? svg.querySelector('a.mp-tn[data-slug="' + a.getAttribute('data-slug') + '"]')
+      : (a.classList.contains('mp-tn') ? a : null);
+    if (topic) revealForTopic(topic);
+    else hideKids();
+    if (topic && a.classList.contains('mp-tn')) setKidsVisible(true);
+    var box = (topic && a.classList.contains('mp-tn')) ? unionBox(a) : a.getBBox();
     var V = vb();
-    var pad = Math.max(box.width, box.height, 80) * 1.8 + 36;
-    var k = Math.min(V.w / pad, (V.h * 0.62) / pad, 3.2);
-    k = clampK(Math.max(k, 1.8));
+    var padW = box.width + 48, padH = box.height + 48;
+    var k = Math.min(V.w / padW, (V.h * 0.70) / padH, a.classList.contains('mp-sub') ? 3.4 : 2.8);
+    k = clampK(Math.max(k, a.classList.contains('mp-sub') ? 1.9 : 1.55));
     var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
     st.k = k;
     st.tx = V.w * 0.50 - k * cx;
-    st.ty = V.h * 0.38 - k * cy;
-    applyCam(!opts.instant);
+    st.ty = V.h * 0.40 - k * cy;
     focused = a;
     setEngaged(true);
     showCard(a);
-    lockDim(a);
+    lockDim(topic || a);
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
     a.classList.add('mp-now');
-    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) {
-      if (n !== a) n.classList.remove('mp-now');
-    });
+    if (topic) topic.classList.add('mp-now');
+    applyCam(!opts.instant);
   }
 
   function restore(opts) {
     opts = opts || {};
     st.k = 1; st.tx = 0; st.ty = 0;
     applyCam(!opts.instant);
-    if (focused) focused.classList.remove('mp-now');
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
     var prev = focused;
     focused = null;
+    hideKids();
     hideCard();
     unlockDim();
     if (!opts.keepEngaged) setEngaged(false);
@@ -260,6 +655,7 @@
     Array.prototype.forEach.call(nodes, function (d) {
       if (d.getAttribute('data-a')) return;
       var on = d.getAttribute('data-ch') === ch || (d.classList.contains('mp-tn') && keep[d.getAttribute('data-slug')]);
+      if (d.classList.contains('mp-sub')) on = d.getAttribute('data-slug') === slug || (!slug && d.getAttribute('data-ch') === ch);
       d.classList.toggle('mp-off', !on);
     });
   }
@@ -326,13 +722,22 @@
     } else armDrift();
   });
 
+  function goBack(opts) {
+    opts = opts || {};
+    if (focused && focused.classList.contains('mp-sub')) {
+      var par = svg.querySelector('a.mp-tn[data-slug="' + focused.getAttribute('data-slug') + '"]');
+      if (par) { focusNode(par, opts); if (opts.returnFocus && par.focus) { try { par.focus({ preventScroll: true }); } catch (e) { par.focus(); } } return; }
+    }
+    restore(opts);
+  }
+
   /* ---------- 事件 ---------- */
   function modifierClick(e) {
     return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1;
   }
 
   svg.addEventListener('click', function (e) {
-    if (moved) { e.preventDefault(); return; }
+    if (moved && !nodeAnchor(e.target)) { e.preventDefault(); return; }
     var a = nodeAnchor(e.target);
     if (a) {
       if (modifierClick(e)) return; /* 让浏览器按链接打开 */
@@ -351,8 +756,10 @@
       if (focused || st.k > 1.02) restore({ returnFocus: false });
       return;
     }
-    /* 点空白：已放大则还原；仅启用时再点一次退出；否则进入可拖动状态 */
-    if (focused || st.k > 1.02) {
+    /* 点空白：逐级返回（小节→专题→全图） */
+    if (focused) {
+      goBack({ returnFocus: false });
+    } else if (st.k > 1.02) {
       restore({ keepEngaged: false, returnFocus: false });
     } else if (engaged) {
       setEngaged(false);
@@ -361,13 +768,13 @@
     }
   });
 
-  elBack.addEventListener('click', function () { restore({ returnFocus: true }); });
+  elBack.addEventListener('click', function () { goBack({ returnFocus: true }); });
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       if (focused || st.k > 1.02 || engaged) {
         e.preventDefault();
-        restore({ returnFocus: true });
+        goBack({ returnFocus: true });
       }
       return;
     }
@@ -420,6 +827,7 @@
       try { scroll.setPointerCapture(e.pointerId); } catch (err) {}
       return;
     }
+    if (nodeAnchor(e.target)) { lastP = { x: e.clientX, y: e.clientY }; moved = false; return; }
     if (!canPan()) { lastP = { x: e.clientX, y: e.clientY }; moved = false; return; }
     panning = true; moved = false; pid = e.pointerId;
     lastP = { x: e.clientX, y: e.clientY };

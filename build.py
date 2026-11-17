@@ -1,4 +1,5 @@
 import importlib.util, glob, os, json, html, sys, math
+import mapkids
 sys.path.insert(0,"content")
 open('assets/demos.js','w').write(''.join(open(f).read() for f in ['assets/chem.js']+sorted(glob.glob('demos_src/*.js'))))
 DEMOS={
@@ -174,10 +175,12 @@ def _mapdata():
         chs[str(k)] = {'zh': name, 'ja': ja, 'intro': intro, 'href': f'#ch-{k}'}
         for top in TOPICS:
             if top.get('area') in areas and top.get('problems'):
-                tps[top['slug']] = {'zh': top['zh'], 'ja': top['ja'], 'intro': top.get('lead') or '', 'href': f'topics/{top["slug"]}/', 'ch': str(k)}
+                tps[top['slug']] = {'zh': top['zh'], 'ja': top['ja'], 'intro': top.get('lead') or '', 'href': f'topics/{top["slug"]}/', 'ch': str(k), 'children': mapkids.kids_from_sections(top.get('sections') or [], top['slug'])}
     s = json.dumps({'subject': '化学', 'chapters': chs, 'topics': tps}, ensure_ascii=False, separators=(',', ':'))
     return s.replace('<', '\\u003c')
 MAPDATA = _mapdata()
+_nk=sum(len(v.get('children') or []) for v in json.loads(MAPDATA.replace('\\u003c','<')).get('topics',{}).values())
+print('map kids:', _nk)
 
 RANKTBL=''.join(f'<tr><td><a href="topics/{t["slug"]}/">{t["n"]} {t["zh"]}</a></td><td>{" ".join(t["bank"]["codes"])}</td><td class="num">{t["bank"]["n"]}</td><td class="stars">{t["bank"]["stars"]}</td></tr>' for t in sorted([t for t in TOPICS if t.get('bank')],key=lambda t:-t['bank']['n']))
 _np = sum(len(t['problems']) for t in TOPICS); _nb = sum(t['bank']['n'] for t in TOPICS if t.get('bank')); _nt = sum(1 for t in TOPICS if t['problems'])

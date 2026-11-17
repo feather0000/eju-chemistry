@@ -828,5 +828,37 @@ body.contents {
   #map.mp-live .mp-xl path { animation: none !important; }
   #map .mp-d { transition: none; }
 }
+
+/* 第三层小节 */
+#map .mp-sub { opacity: 0; pointer-events: none; }
+#map.mp-kids-on .mp-sub,
+#map .mp-sub.mp-in { opacity: 1; pointer-events: auto; }
+#map .mp-sub {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(.72);
+}
+#map.mp-kids-on .mp-sub,
+#map .mp-sub.mp-in { transform: scale(1); }
+#map.mp-live .mp-sub {
+  transition: opacity 420ms ease, transform 420ms ease;
+}
+#map .mp-sub .mp-box {
+  fill: var(--surface);
+  stroke: var(--c, var(--ink-3));
+  stroke-width: 1.15;
+}
+#map .mp-sub .mp-t { font-size: 11px; fill: var(--ink); }
+#map .mp-sub .mp-f { font-size: 10px; fill: var(--ink-3); font-style: italic; }
+#map .mp-subbr { fill: var(--c, var(--ink-3)); opacity: .65; pointer-events: none; }
+#map .mp-hit { fill: none; pointer-events: all; }
+#map a.mp-sub.mp-now .mp-box { stroke-width: 2.1; }
+#map a.mp-sub.mp-now .mp-t { fill: var(--c, var(--ink)); }
+#map a.mp-sub:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  #map .mp-sub, #map.mp-live .mp-sub { transition: none !important; transform: none !important; }
+}
+
 /* ==== /知识导图互动 ==== */
 /* ==== /化学站首页目次 ==== */
