@@ -5,7 +5,8 @@
    - 空白处、说明卡「返回」、Esc：还原
    - 滚轮：默认需按住 Ctrl 或 ⌘（避免抢走页面滚动）；点进图中（.mp-engaged）后可直接滚动缩放、拖动平移
    - 触屏：未点进图中时单指仍滚动页面；双指缩放；点进图中后可单指拖动。双指也会进入已启用状态
-   - 节点轻微漂浮、星点闪烁、联系弧虚线缓缓流动；prefers-reduced-motion 时全部取消，缩放瞬间到位 */
+   - 节点轻微漂浮、星点闪烁、联系弧虚线缓缓流动；prefers-reduced-motion 时全部取消，缩放瞬间到位
+   - 专题小节只在放大聚焦（或自由缩放到约 2 倍）后从该专题长出，总览图不画这些分支 */
 (function () {
   'use strict';
   var root = document.querySelector('#map');
@@ -93,10 +94,15 @@
     cam._cur = { k: k, tx: tx, ty: ty };
   }
   function easeInOut(u) { return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; }
-  function applyCam(animate) {
+  function applyCam(animate, onDone) {
     if (camAnim) { cancelAnimationFrame(camAnim); camAnim = null; }
     var to = { k: st.k, tx: st.tx, ty: st.ty };
-    if (!animate || reduced()) { setCam(to.k, to.tx, to.ty); updateLOD(); return; }
+    function finish() {
+      setCam(to.k, to.tx, to.ty);
+      updateLOD();
+      if (onDone) onDone();
+    }
+    if (!animate || reduced()) { finish(); return; }
     var from = cam._cur || { k: 1, tx: 0, ty: 0 };
     var t0 = performance.now(), dur = 500;
     (function tick(now) {
@@ -104,7 +110,7 @@
       var e = easeInOut(u);
       setCam(from.k + (to.k - from.k) * e, from.tx + (to.tx - from.tx) * e, from.ty + (to.ty - from.ty) * e);
       if (u < 1) camAnim = requestAnimationFrame(tick);
-      else { camAnim = null; setCam(to.k, to.tx, to.ty); updateLOD(); }
+      else { camAnim = null; finish(); }
     })(t0);
   }
 
@@ -112,6 +118,12 @@
     var v = svg.viewBox && svg.viewBox.baseVal;
     if (v && v.width) return { x: v.x, y: v.y, w: v.width, h: v.height };
     return { x: 0, y: 0, w: svg.clientWidth || 1160, h: svg.clientHeight || 1240 };
+  }
+
+  function visibleUserRect() {
+    var V = vb();
+    var k = st.k || 1;
+    return { x: (V.x - st.tx) / k, y: (V.y - st.ty) / k, w: V.w / k, h: V.h / k };
   }
 
   function clientToView(cx, cy) {
@@ -224,7 +236,97 @@
 
 
   /* ---------- 第三层小节（专题聚焦或放大越过阈值时出现） ---------- */
-  var LOD_K = 1.65;
+  var LOD_K = 2;
+  var kidsVisible = false;
+  var kidAnim = null;
+
+  function cancelKidAnim() {
+    if (kidAnim) { cancelAnimationFrame(kidAnim); kidAnim = null; }
+  }
+  function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
+
+  function setKidsProgress(g, t) {
+    if (!g) return;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    var branches = g.querySelectorAll('.mp-subbr');
+    var nodes = g.querySelectorAll('a.mp-sub');
+    Array.prototype.forEach.call(branches, function (br, i) {
+      var x0 = +br.getAttribute('data-x0'), y0 = +br.getAttribute('data-y0');
+      var u = (t - i * 0.05) / 0.55;
+      if (u < 0) u = 0; if (u > 1) u = 1;
+      var s = easeOutCubic(u);
+      br.setAttribute('transform', 'translate(' + x0 + ' ' + y0 + ') scale(' + s + ') translate(' + (-x0) + ' ' + (-y0) + ')');
+      br.style.opacity = (0.65 * s).toFixed(3);
+    });
+    Array.prototype.forEach.call(nodes, function (node, i) {
+      var u = (t - 0.32 - i * 0.07) / 0.45;
+      if (u < 0) u = 0; if (u > 1) u = 1;
+      var s = 0.72 + 0.28 * easeOutCubic(u);
+      node.style.opacity = String(u);
+      node.style.transform = 'scale(' + s + ')';
+      var on = u >= 0.85;
+      node.setAttribute('tabindex', on ? '0' : '-1');
+      node.setAttribute('aria-hidden', on ? 'false' : 'true');
+      if (on) node.classList.add('mp-in');
+      else node.classList.remove('mp-in');
+    });
+  }
+
+  function growKids(opts) {
+    opts = opts || {};
+    var g = cam.querySelector('.mp-subs');
+    if (!g) { if (opts.onDone) opts.onDone(); return; }
+    cancelKidAnim();
+    root.classList.add('mp-kids-on');
+    root.classList.remove('mp-kids-grown');
+    g.setAttribute('aria-hidden', 'false');
+    if (reduced() || opts.instant) {
+      setKidsProgress(g, 1);
+      kidsVisible = true;
+      root.classList.add('mp-kids-grown');
+      if (opts.onDone) opts.onDone();
+      return;
+    }
+    var t0 = performance.now(), dur = 480;
+    (function tick(now) {
+      var u = Math.min(1, (now - t0) / dur);
+      setKidsProgress(g, u);
+      if (u < 1) kidAnim = requestAnimationFrame(tick);
+      else {
+        kidAnim = null;
+        setKidsProgress(g, 1);
+        kidsVisible = true;
+        root.classList.add('mp-kids-grown');
+        if (opts.onDone) opts.onDone();
+      }
+    })(t0);
+  }
+
+  function retractKids(opts) {
+    opts = opts || {};
+    var g = cam.querySelector('.mp-subs');
+    function finish() {
+      g = cam.querySelector('.mp-subs');
+      if (g && g.parentNode) g.parentNode.removeChild(g);
+      shownSlug = null;
+      kidsVisible = false;
+      root.classList.remove('mp-kids-on');
+      root.classList.remove('mp-kids-grown');
+      if (opts.onDone) opts.onDone();
+    }
+    if (!g) { finish(); return; }
+    cancelKidAnim();
+    g.setAttribute('aria-hidden', 'true');
+    if (reduced() || opts.instant) { setKidsProgress(g, 0); finish(); return; }
+    var t0 = performance.now(), dur = 280;
+    (function tick(now) {
+      var u = Math.min(1, (now - t0) / dur);
+      setKidsProgress(g, 1 - u);
+      if (u < 1) kidAnim = requestAnimationFrame(tick);
+      else { kidAnim = null; finish(); }
+    })(t0);
+  }
+
   var shownSlug = null;
 
   function topicCenter(a) {
@@ -312,6 +414,15 @@
     var boxes = labels;
     var V = vb();
     var mL = V.x + 48, mR = V.x + V.w - 48, mT = V.y + 48, mB = V.y + V.h - 80;
+    if (st.k >= 1.2) {
+      var vis = visibleUserRect();
+      mL = Math.max(mL, vis.x + 24);
+      mR = Math.min(mR, vis.x + vis.w - 24);
+      mT = Math.max(mT, vis.y + 24);
+      mB = Math.min(mB, vis.y + vis.h * 0.68);
+      if (mR - mL < 80) { mL = vis.x + 12; mR = vis.x + vis.w - 12; }
+      if (mB - mT < 80) { mT = vis.y + 12; mB = vis.y + vis.h * 0.72; }
+    }
     var clear = Math.max(pb.width, pb.height) / 2 + 22;
     var rOff = clear + 36;
     function anglesFor(idxs, h, r, boxsrc) {
@@ -450,6 +561,45 @@
     }
     if (!chosen) { chosen = layout(heading + 3.1416, Math.max(rMin, rOff + 80)); }
 
+    (function separate(pts) {
+      var pad = 10;
+      function hitsParent(p) { return hitsRect(p, pb, 10); }
+      function hitsOther(p) {
+        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 8)) return true;
+        return false;
+      }
+      for (var iter = 0; iter < 10; iter++) {
+        var moved = false;
+        for (var i = 0; i < pts.length; i++) {
+          for (var j = i + 1; j < pts.length; j++) {
+            var a = pts[i], b = pts[j];
+            var dx = b.x - a.x, dy = b.y - a.y;
+            var needX = (a.w + b.w) / 2 + pad, needY = (a.h + b.h) / 2 + pad;
+            if (Math.abs(dx) < needX && Math.abs(dy) < needY) {
+              var ox = needX - Math.abs(dx), oy = needY - Math.abs(dy);
+              var ax = a.x, ay = a.y, bx = b.x, by = b.y;
+              if (ox < oy) {
+                var sx = (dx < 0 ? -1 : 1) * (ox / 2 + 0.5);
+                if (!dx) sx = (i % 2 ? 1 : -1) * (ox / 2 + 0.5);
+                a.x -= sx; b.x += sx;
+              } else {
+                var sy = (dy < 0 ? -1 : 1) * (oy / 2 + 0.5);
+                if (!dy) sy = (i % 2 ? 1 : -1) * (oy / 2 + 0.5);
+                a.y -= sy; b.y += sy;
+              }
+              if (hitsParent(a) || hitsParent(b) || hitsOther(a) || hitsOther(b)) {
+                a.x = ax; a.y = ay; b.x = bx; b.y = by;
+              } else {
+                moved = true;
+              }
+            }
+          }
+          pts[i].a = Math.atan2(pts[i].y - c.y, pts[i].x - c.x);
+        }
+        if (!moved) break;
+      }
+    })(chosen.pts);
+
     kids.forEach(function (kid, i) {
       var pt = chosen.pts[i];
       var x = pt.x, y = pt.y, bw = pt.w, bh = pt.h;
@@ -482,6 +632,9 @@
       var br = document.createElementNS(NS, 'path');
       br.setAttribute('class', 'mp-subbr');
       br.setAttribute('d', taperPath(x0, y0, innerX, innerY, 1.8, 0.4));
+      br.setAttribute('data-x0', x0.toFixed(2));
+      br.setAttribute('data-y0', y0.toFixed(2));
+      br.style.opacity = '0';
       br.setAttribute('aria-hidden', 'true');
       br.setAttribute('pointer-events', 'none');
       g.insertBefore(br, g.firstChild);
@@ -516,56 +669,71 @@
       g.appendChild(a);
     });
     shownSlug = slug;
+    kidsVisible = false;
+    g.setAttribute('aria-hidden', 'true');
+    setKidsProgress(g, 0);
     return g;
   }
 
-  function setKidsVisible(on) {
-    root.classList.toggle('mp-kids-on', !!on);
-    var g = cam.querySelector('.mp-subs');
-    if (!g) return;
-    var nodes = g.querySelectorAll('a.mp-sub');
-    Array.prototype.forEach.call(nodes, function (n) {
-      n.setAttribute('tabindex', on ? '0' : '-1');
-      if (on) n.classList.add('mp-in');
-      else n.classList.remove('mp-in');
-    });
-    if (reduced()) {
-      /* 无动画，直接显隐 */
-    }
-  }
+  function hideKids() { retractKids({ instant: true }); }
 
-  function hideKids() {
-    setKidsVisible(false);
-    var g = cam.querySelector('.mp-subs');
-    if (g) {
-      /* 保留节点直到下次放置，避免切走时闪断；下次 placeKids 会替换 */
-      if (!focused || !focused.classList.contains('mp-sub')) {
-        /* keep until replaced */
-      }
-    }
-    if (!focused || (!focused.classList.contains('mp-tn') && !focused.classList.contains('mp-sub'))) {
-      if (g && g.parentNode) g.parentNode.removeChild(g);
-      shownSlug = null;
-    }
-  }
-
+  /* 用小节框的属性算包围盒，不受生长动画的 scale(0) 影响 */
   function unionBox(el) {
     var b = el.getBBox();
     var g = cam.querySelector('.mp-subs');
-    if (!g || !root.classList.contains('mp-kids-on')) return b;
-    var gb = g.getBBox();
-    var x = Math.min(b.x, gb.x), y = Math.min(b.y, gb.y);
-    var r = Math.max(b.x + b.width, gb.x + gb.width), bo = Math.max(b.y + b.height, gb.y + gb.height);
+    if (!g) return b;
+    var x = b.x, y = b.y, r = b.x + b.width, bo = b.y + b.height;
+    Array.prototype.forEach.call(g.querySelectorAll('a.mp-sub .mp-box'), function (rect) {
+      var rx = +rect.getAttribute('x'), ry = +rect.getAttribute('y');
+      var rw = +rect.getAttribute('width'), rh = +rect.getAttribute('height');
+      x = Math.min(x, rx); y = Math.min(y, ry);
+      r = Math.max(r, rx + rw); bo = Math.max(bo, ry + rh);
+    });
     return { x: x, y: y, width: r - x, height: bo - y };
+  }
+
+  function unionOverflows(topic) {
+    var box = unionBox(topic);
+    var vis = visibleUserRect();
+    var pad = 20;
+    return box.x < vis.x + pad || box.y < vis.y + pad ||
+      box.x + box.width > vis.x + vis.w - pad ||
+      box.y + box.height > vis.y + vis.h * 0.70;
+  }
+
+  function fitUnion(topic) {
+    if (!cam.querySelector('.mp-subs')) return false;
+    if (!unionOverflows(topic)) return false;
+    frameBox(unionBox(topic), 'topic');
+    return true;
   }
 
   function revealForTopic(a, opts) {
     opts = opts || {};
-    if (!a || !a.classList.contains('mp-tn')) return;
+    if (!a || !a.classList.contains('mp-tn')) { if (opts.onDone) opts.onDone(); return; }
     var slug = a.getAttribute('data-slug');
-    if (shownSlug !== slug) placeKids(a);
-    setKidsVisible(true);
+    if (!kidsFor(slug).length) { if (opts.onDone) opts.onDone(); return; }
+    if (shownSlug === slug && kidsVisible && !opts.force) { if (opts.onDone) opts.onDone(); return; }
+    if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
+    if (shownSlug !== slug || !cam.querySelector('.mp-subs')) placeKids(a);
+    function startGrow() { growKids({ instant: opts.instant, onDone: opts.onDone }); }
+    if (fitUnion(a) && !reduced() && !opts.instant) applyCam(true, startGrow);
+    else {
+      if (st.k !== (cam._cur && cam._cur.k)) applyCam(false);
+      startGrow();
+    }
   }
+
+  window.__ejuMap = {
+    cancelKidAnim: cancelKidAnim,
+    setKidsT: function (t) {
+      var g = cam.querySelector('.mp-subs');
+      if (!g) return;
+      setKidsProgress(g, t);
+      if (t >= 1) { kidsVisible = true; root.classList.add('mp-kids-grown'); g.setAttribute('aria-hidden', 'false'); }
+      if (t <= 0) { kidsVisible = false; root.classList.remove('mp-kids-grown'); }
+    }
+  };
 
   function nearestTopic(pt, maxd) {
     var best = null, bd = maxd;
@@ -582,50 +750,98 @@
     if (st.k >= LOD_K) {
       var a = nearestTopic(viewCenterUser(), 160);
       if (a && kidsFor(a.getAttribute('data-slug')).length) {
+        if (shownSlug === a.getAttribute('data-slug') && kidsVisible) return;
         revealForTopic(a);
         return;
       }
     }
-    hideKids();
+    if (kidsVisible || shownSlug) retractKids({ instant: reduced() });
   }
 
-  /* 聚焦：把节点放到图板偏上的中央，为下方说明卡留空，缩放限制在 1.8–3.2 */
+  function frameBox(box, kind) {
+    var V = vb();
+    var padW = box.width + 48, padH = box.height + 48;
+    var kMax = kind === 'child' ? 3.4 : 2.8;
+    var kMin = kind === 'child' ? 1.9 : 1.55;
+    var k = Math.min(V.w / padW, (V.h * 0.70) / padH, kMax);
+    k = clampK(Math.max(k, kMin));
+    var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    st.k = k;
+    st.tx = V.w * 0.50 - k * cx;
+    st.ty = V.h * 0.40 - k * cy;
+  }
+
+  function markNow(a, topic) {
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
+    a.classList.add('mp-now');
+    if (topic) topic.classList.add('mp-now');
+  }
+
+  /* 先把专题本身放大，再从节点长出小节分支，而不是连分支一起缩放原图 */
   function focusNode(a, opts) {
     if (!a) return;
     opts = opts || {};
     var topic = a.classList.contains('mp-sub')
       ? svg.querySelector('a.mp-tn[data-slug="' + a.getAttribute('data-slug') + '"]')
       : (a.classList.contains('mp-tn') ? a : null);
-    if (topic) revealForTopic(topic);
-    else hideKids();
-    if (topic && a.classList.contains('mp-tn')) setKidsVisible(true);
-    var box = (topic && a.classList.contains('mp-tn')) ? unionBox(a) : a.getBBox();
-    var V = vb();
-    var padW = box.width + 48, padH = box.height + 48;
-    var k = Math.min(V.w / padW, (V.h * 0.70) / padH, a.classList.contains('mp-sub') ? 3.4 : 2.8);
-    k = clampK(Math.max(k, a.classList.contains('mp-sub') ? 1.9 : 1.55));
-    var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
-    st.k = k;
-    st.tx = V.w * 0.50 - k * cx;
-    st.ty = V.h * 0.40 - k * cy;
+
+    if (!topic) {
+      if (kidsVisible || shownSlug) retractKids({ instant: !!opts.instant || reduced() });
+      frameBox(a.getBBox(), 'chapter');
+      focused = a;
+      setEngaged(true);
+      showCard(a);
+      lockDim(a);
+      markNow(a, null);
+      applyCam(!opts.instant);
+      return;
+    }
+
+    if (a.classList.contains('mp-sub')) {
+      if (shownSlug !== topic.getAttribute('data-slug') || !kidsVisible) {
+        placeKids(topic);
+        growKids({ instant: true });
+      }
+      frameBox(a.getBBox(), 'child');
+      focused = a;
+      setEngaged(true);
+      showCard(a);
+      lockDim(topic);
+      markNow(a, topic);
+      applyCam(!opts.instant);
+      return;
+    }
+
+    var slug = a.getAttribute('data-slug');
+    var comingBack = kidsVisible && shownSlug === slug;
     focused = a;
     setEngaged(true);
     showCard(a);
-    lockDim(topic || a);
-    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
-    a.classList.add('mp-now');
-    if (topic) topic.classList.add('mp-now');
-    applyCam(!opts.instant);
+    lockDim(a);
+    markNow(a, topic);
+
+    if (comingBack) {
+      frameBox(unionBox(a), 'topic');
+      applyCam(!opts.instant);
+      return;
+    }
+
+    if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
+    frameBox(a.getBBox(), 'topic');
+    applyCam(!opts.instant && !reduced(), function () {
+      if (focused !== a) return;
+      revealForTopic(a, { instant: reduced() || opts.instant });
+    });
   }
 
   function restore(opts) {
     opts = opts || {};
+    var prev = focused;
+    focused = null;
+    retractKids({ instant: reduced() || !!opts.instant });
     st.k = 1; st.tx = 0; st.ty = 0;
     applyCam(!opts.instant);
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
-    var prev = focused;
-    focused = null;
-    hideKids();
     hideCard();
     unlockDim();
     if (!opts.keepEngaged) setEngaged(false);
@@ -851,6 +1067,8 @@
         st.ty = p.y - (p.y - pinch0.ty) * (k2 / pinch0.k);
         st.k = k2;
         applyCam(false);
+        if (st.k > 1.02) setEngaged(true);
+        updateLOD();
       }
       e.preventDefault();
       return;
