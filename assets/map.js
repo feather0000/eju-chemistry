@@ -84,6 +84,7 @@
   var engaged = false;
   var panning = false;
   var moved = false;
+  var justDragged = false;
   var lodHold = false;
   var camTick = null;
   var inertiaV = { vx: 0, vy: 0 };
@@ -145,6 +146,7 @@
       if (nearly(nk, st.k) && nearly(ntx, st.tx, 0.12) && nearly(nty, st.ty, 0.12)) {
         zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
         camTick = null;
+        scheduleReflow({ flush: true });
         return;
       }
       zsel.call(zoomer.transform, zoomT(nk, ntx, nty));
@@ -180,6 +182,7 @@
         inertiaV.vy = 0;
         zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
         camTick = null;
+        scheduleReflow({ flush: true });
         return;
       }
       zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
@@ -283,13 +286,20 @@
             if (typ.indexOf('touch') === 0 && ((event.sourceEvent.touches && event.sourceEvent.touches.length >= 2) || typ === 'touchmove')) setEngaged(true);
           }
         }
-        if (!lodHold) updateLOD();
+        if (!lodHold) { updateLOD(); scheduleReflow(); }
       })
       .on('end', function (event) {
         if (event.sourceEvent && panning && moved) startInertia();
         else dragTrace = [];
         panning = false;
-        setTimeout(function () { if (!panning) moved = false; }, 0);
+        if (moved) {
+          justDragged = true;
+          requestAnimationFrame(function () {
+            setTimeout(function () { justDragged = false; moved = false; }, 0);
+          });
+        } else {
+          moved = false;
+        }
       });
     zsel.call(zoomer).on('dblclick.zoom', null);
     zsel.call(zoomer.transform, zoomT(1, 0, 0));
@@ -373,6 +383,8 @@
   var kidsVisible = false;
   var kidsPhase = 'off';
   var kidAnim = null;
+  var reflowTimer = null;
+  var reflowAnim = null;
 
   function cancelKidAnim() {
     if (kidAnim) { cancelAnimationFrame(kidAnim); kidAnim = null; }
@@ -388,16 +400,19 @@
       var x0 = +br.getAttribute('data-x0'), y0 = +br.getAttribute('data-y0');
       var u = (t - i * 0.05) / 0.55;
       if (u < 0) u = 0; if (u > 1) u = 1;
-      var s = easeOutCubic(u);
-      br.setAttribute('transform', 'translate(' + x0 + ' ' + y0 + ') scale(' + s + ') translate(' + (-x0) + ' ' + (-y0) + ')');
-      br.style.opacity = (0.65 * s).toFixed(3);
+      var sc = easeOutCubic(u);
+      br.setAttribute('transform', 'translate(' + x0 + ' ' + y0 + ') scale(' + sc + ') translate(' + (-x0) + ' ' + (-y0) + ')');
+      br.style.opacity = (0.65 * sc).toFixed(3);
     });
     Array.prototype.forEach.call(nodes, function (node, i) {
       var u = (t - 0.32 - i * 0.07) / 0.45;
       if (u < 0) u = 0; if (u > 1) u = 1;
-      var s = 0.72 + 0.28 * easeOutCubic(u);
+      var grow = 0.72 + 0.28 * easeOutCubic(u);
+      var cx = +node.getAttribute('data-cx'), cy = +node.getAttribute('data-cy');
+      var s = +node.getAttribute('data-s') || 1;
       node.style.opacity = String(u);
-      node.style.transform = 'scale(' + s + ')';
+      var gi = node.querySelector('.mp-subg') || node;
+      gi.setAttribute('transform', 'translate(' + cx + ' ' + cy + ') scale(' + (s * grow).toFixed(4) + ')');
       var on = u >= 0.85;
       node.setAttribute('tabindex', on ? '0' : '-1');
       node.setAttribute('aria-hidden', on ? 'false' : 'true');
@@ -455,6 +470,8 @@
     }
     if (!g) { finish(); return; }
     if (kidsPhase === 'closing' && !opts.instant) return;
+    if (reflowTimer) { clearTimeout(reflowTimer); reflowTimer = null; }
+    if (reflowAnim) { cancelAnimationFrame(reflowAnim); reflowAnim = null; }
     cancelKidAnim();
     kidsPhase = 'closing';
     g.setAttribute('aria-hidden', 'true');
@@ -513,242 +530,593 @@
     return (data.topics && data.topics[slug] && data.topics[slug].children) || [];
   }
 
-  function placeKids(parent) {
-    var slug = parent.getAttribute('data-slug');
-    var kids = kidsFor(slug);
-    var g = cam.querySelector('.mp-subs');
-    if (g) g.parentNode.removeChild(g);
-    shownSlug = null;
-    if (!kids.length) return null;
-    g = document.createElementNS(NS, 'g');
-    g.setAttribute('class', 'mp-subs mp-c' + (parent.getAttribute('data-ch') || ''));
-    g.setAttribute('data-slug', slug);
-    cam.appendChild(g);
+  function kidScale() {
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    if (k < 1) k = 1;
+    /* 略大于总览字号，放大后保持大约恒定的屏幕大小 */
+    var s = 1.35 / k;
+    return s > 1 ? 1 : s;
+  }
 
-    var boxEl = parent.querySelector('.mp-box');
-    var pb, c;
-    if (boxEl) {
-      var bx = +boxEl.getAttribute('x'), by = +boxEl.getAttribute('y');
-      var bw0 = +boxEl.getAttribute('width'), bh0 = +boxEl.getAttribute('height');
-      pb = { x: bx, y: by, width: bw0, height: bh0 };
-      c = { x: bx + bw0 / 2, y: by + bh0 / 2 };
-    } else {
-      var bb = parent.getBBox();
-      pb = { x: bb.x, y: bb.y, width: bb.width, height: bb.height };
-      c = { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 };
+  function visibleLayoutRect() {
+    var vis = visibleUserRect();
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    var p = 16 / k;
+    var bottomFrac = (card && !card.hasAttribute('hidden')) ? 0.32 : 0.14;
+    return { x: vis.x + p, y: vis.y + p, w: vis.w - 2 * p, h: vis.h * (1 - bottomFrac) - p };
+  }
+
+  function elemUserRect(el) {
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    if (!r || !r.width) return null;
+    var p1 = clientToView(r.left, r.top);
+    var p2 = clientToView(r.right, r.bottom);
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    var tx = cam._cur ? cam._cur.tx : st.tx;
+    var ty = cam._cur ? cam._cur.ty : st.ty;
+    var x1 = (p1.x - tx) / k, y1 = (p1.y - ty) / k;
+    var x2 = (p2.x - tx) / k, y2 = (p2.y - ty) / k;
+    return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
+  }
+  function parentGeom(parent) {
+    var boxEl = parent.querySelector('.mp-box') || parent;
+    var pb = elemUserRect(boxEl);
+    if (!pb || !pb.width) {
+      try {
+        var bb = boxEl.getBBox();
+        pb = { x: bb.x, y: bb.y, width: bb.width, height: bb.height };
+      } catch (err) {
+        pb = { x: 0, y: 0, width: 80, height: 40 };
+      }
     }
-    var star = topicCenter(parent);
-    var o = mapCenter();
-    var heading = Math.atan2(c.y - o.y, c.x - o.x);
-    var ch = parent.getAttribute('data-ch') || '';
-    function fitText(s, size, maxW) {
-      s = (s || '') + '';
-      if (!s) return '';
-      if (tw(s, size) <= maxW) return s;
-      var t = s;
+    var c = { x: pb.x + pb.width / 2, y: pb.y + pb.height / 2 };
+    return { pb: pb, c: c };
+  }
+
+  function labelSizes(kids) {
+    function fitText(str, size, maxW) {
+      str = (str || '') + '';
+      if (!str) return '';
+      if (tw(str, size) <= maxW) return str;
+      var t = str;
       while (t.length > 1 && tw(t + '…', size) > maxW) t = t.slice(0, -1);
       return t + '…';
     }
     var MAXW = 168;
-    var labels = kids.map(function (k) {
+    return kids.map(function (k) {
       var f = fitText(k.f, 10, MAXW - 20);
       var w = Math.max(tw(k.zh, 11.4), tw(f, 10), 80) + 20;
       return { f: f, w: Math.min(Math.max(w, 88), MAXW), h: f ? 44 : 32 };
     });
-    var boxes = labels;
-    var V = vb();
-    var mL = V.x + 48, mR = V.x + V.w - 48, mT = V.y + 48, mB = V.y + V.h - 80;
-    if (st.k >= 1.2) {
-      var vis = visibleUserRect();
-      mL = Math.max(mL, vis.x + 24);
-      mR = Math.min(mR, vis.x + vis.w - 24);
-      mT = Math.max(mT, vis.y + 24);
-      mB = Math.min(mB, vis.y + vis.h * 0.68);
-      if (mR - mL < 80) { mL = vis.x + 12; mR = vis.x + vis.w - 12; }
-      if (mB - mT < 80) { mT = vis.y + 12; mB = vis.y + vis.h * 0.72; }
-    }
-    var clear = Math.max(pb.width, pb.height) / 2 + 22;
-    var rOff = clear + 36;
-    function layout(h, r) {
-      var n = kids.length;
-      var tree = d3.hierarchy({ children: kids.map(function (_, i) { return { i: i }; }) });
-      var need = 0;
-      for (var i = 0; i < n; i++) need += boxes[i].w + 12;
-      var span = n <= 1 ? 0.001 : Math.min(2.7, need / Math.max(r, 1));
-      d3.cluster().size([span, r])(tree);
-      var pts = new Array(n);
-      tree.leaves().forEach(function (d) {
-        var i2 = d.data.i;
-        var ang = n === 1 ? h : (h - span / 2 + d.x);
-        pts[i2] = {
-          x: c.x + d.y * Math.cos(ang),
-          y: c.y + d.y * Math.sin(ang),
-          a: ang, w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
-        };
-      });
-      return { pts: pts };
-    }
-    function layout2(h, r, gap) {
-      var n = kids.length, n0 = Math.ceil(n / 2);
-      var pts = new Array(n);
-      function put(idxs, rr) {
-        if (!idxs.length) return;
-        var tree = d3.hierarchy({ children: idxs.map(function (i) { return { i: i }; }) });
-        var need = 0;
-        for (var j = 0; j < idxs.length; j++) need += boxes[idxs[j]].w + 12;
-        var span = idxs.length <= 1 ? 0.001 : Math.min(2.7, need / Math.max(rr, 1));
-        d3.cluster().size([span, rr])(tree);
-        tree.leaves().forEach(function (d) {
-          var i2 = d.data.i;
-          var ang = idxs.length === 1 ? h : (h - span / 2 + d.x);
-          pts[i2] = {
-            x: c.x + d.y * Math.cos(ang),
-            y: c.y + d.y * Math.sin(ang),
-            a: ang, w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
-          };
-        });
-      }
-      var row0 = [], row1 = [];
-      for (var i = 0; i < n; i++) (i < n0 ? row0 : row1).push(i);
-      put(row0, r);
-      put(row1, r + (gap || 56));
-      return { pts: pts };
-    }
+  }
 
-    function inPlate(pts) {
-      for (var i = 0; i < pts.length; i++) {
-        var p = pts[i];
-        if (p.x - p.w / 2 < mL || p.x + p.w / 2 > mR || p.y - p.h / 2 < mT || p.y + p.h / 2 > mB) return false;
-      }
-      return true;
-    }
+  function neighborRects(parent) {
     var others = [];
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (el) {
       if (el === parent) return;
-      try {
-        var b = el.getBBox();
-        others.push({ x: b.x, y: b.y, width: b.width, height: b.height });
-      } catch (err) {}
+      var box = el.querySelector('.mp-box') || el.querySelector('circle');
+      var b = elemUserRect(box);
+      if (b && b.width && b.height) others.push(b);
     });
+    return others;
+  }
+
+  function computeKidLayout(parent) {
+    var kids = kidsFor(parent.getAttribute('data-slug'));
+    if (!kids.length) return null;
+    var geom = parentGeom(parent);
+    var pb = geom.pb, c = geom.c;
+    var boxes = labelSizes(kids);
+    var s = kidScale();
+    var vis = visibleLayoutRect();
+    var gap = 14 * s;
+    var stem = Math.max(24 * s, 14 * s);
+    var items = boxes.map(function (b) {
+      return { w: b.w, h: b.h, vw: b.w * s, vh: b.h * s, f: b.f };
+    });
+    var others = neighborRects(parent);
+
     function hitsRect(p, r, pad) {
-      return !(p.x + p.w / 2 < r.x - pad || p.x - p.w / 2 > r.x + r.width + pad ||
-               p.y + p.h / 2 < r.y - pad || p.y - p.h / 2 > r.y + r.height + pad);
+      return !(p.x + p.vw / 2 < r.x - pad || p.x - p.vw / 2 > r.x + r.width + pad ||
+               p.y + p.vh / 2 < r.y - pad || p.y - p.vh / 2 > r.y + r.height + pad);
+    }
+    function overlapsParent(pts) {
+      for (var i = 0; i < pts.length; i++) if (hitsRect(pts[i], pb, 8 * s)) return true;
+      return false;
     }
     function overlap(pts) {
+      if (overlapsParent(pts)) return true;
       for (var i = 0; i < pts.length; i++) {
         var p = pts[i];
-        if (hitsRect(p, pb, 10)) return true;
-        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 12)) return true;
+        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 8 * s)) return true;
       }
       for (var i2 = 0; i2 < pts.length; i2++) for (var j = i2 + 1; j < pts.length; j++) {
         var dx = Math.abs(pts[i2].x - pts[j].x), dy = Math.abs(pts[i2].y - pts[j].y);
-        if (dx < (pts[i2].w + pts[j].w) / 2 + 8 && dy < (pts[i2].h + pts[j].h) / 2 + 8) return true;
+        if (dx < (pts[i2].vw + pts[j].vw) / 2 + 8 * s && dy < (pts[i2].vh + pts[j].vh) / 2 + 8 * s) return true;
       }
       return false;
     }
-    var fan = heading, chosen = null;
-    var needW = 0;
-    for (var ni = 0; ni < boxes.length; ni++) needW += boxes[ni].w + 12;
-    var rMin = kids.length <= 1 ? rOff : Math.max(rOff, needW / 2.7);
-    var turns = [0, 0.35, -0.35, 0.6, -0.6, 0.9, -0.9, 1.15, -1.15, 1.45, -1.45, 1.75, -1.75, 3.1416];
-    function tryAt(fn, h, r) {
-      var L = fn(h, r);
-      if (!overlap(L.pts) && inPlate(L.pts)) { chosen = L; fan = h; return true; }
-      return false;
-    }
-    for (var t = 0; t < turns.length && !chosen; t++) {
-      for (var step = 0; step < 18 && !chosen; step++) {
-        tryAt(layout, heading + turns[t], rMin + step * 20);
+    function inView(pts) {
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (p.x - p.vw / 2 < vis.x || p.x + p.vw / 2 > vis.x + vis.w ||
+            p.y - p.vh / 2 < vis.y || p.y + p.vh / 2 > vis.y + vis.h) return false;
       }
+      return true;
     }
-    if (!chosen) {
-      for (var t2 = 0; t2 < turns.length && !chosen; t2++) {
-        for (var step2 = 0; step2 < 14 && !chosen; step2++) {
-          var L2 = layout2(heading + turns[t2], Math.max(rOff, rMin * 0.62) + step2 * 18, 58);
-          if (!overlap(L2.pts) && inPlate(L2.pts)) { chosen = L2; fan = heading + turns[t2]; }
-        }
+    function finish(pts) {
+      for (var i = 0; i < pts.length; i++) {
+        pts[i].a = Math.atan2(pts[i].y - c.y, pts[i].x - c.x);
+        pts[i].s = s;
       }
+      return { pts: pts, s: s, c: c, pb: pb };
     }
-    if (!chosen) {
-      function layoutGreedy() {
-        var pts = [];
-        var dA = 0.16;
-        for (var i = 0; i < kids.length; i++) {
-          var found = null;
-          for (var step = 0; step < 24 && !found; step++) {
-            var r = rOff + 24 + step * 16;
-            var nAng = Math.floor((2 * Math.PI) / dA);
-            for (var k = 0; k < nAng && !found; k++) {
-              var sign = (k % 2) ? 1 : -1;
-              var off = Math.ceil(k / 2) * dA;
-              var ang = heading + sign * off;
-              var p = { x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang), a: ang, w: boxes[i].w, h: boxes[i].h, f: boxes[i].f };
-              if (!overlap(pts.concat([p])) && inPlate([p])) found = p;
-            }
-          }
-          if (!found) {
-            var ang0 = heading + (i - (kids.length - 1) / 2) * 0.45;
-            var rr = Math.max(rMin, rOff + 80);
-            found = { x: c.x + rr * Math.cos(ang0), y: c.y + rr * Math.sin(ang0), a: ang0, w: boxes[i].w, h: boxes[i].h, f: boxes[i].f };
-          }
-          pts.push(found);
-        }
-        return { pts: pts };
-      }
-      var Lg = layoutGreedy();
-      var allOk = !overlap(Lg.pts) && inPlate(Lg.pts);
-      chosen = allOk || !chosen ? Lg : chosen;
-      if (!allOk) chosen = Lg;
-    }
-    if (!chosen) { chosen = layout(heading + 3.1416, Math.max(rMin, rOff + 80)); }
 
-    (function separate(pts) {
-      var pad = 10;
-      function hitsParent(p) { return hitsRect(p, pb, 10); }
-      function hitsOther(p) {
-        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 8)) return true;
-        return false;
-      }
-      for (var iter = 0; iter < 10; iter++) {
-        var moved = false;
-        for (var i = 0; i < pts.length; i++) {
-          for (var j = i + 1; j < pts.length; j++) {
-            var a = pts[i], b = pts[j];
-            var dx = b.x - a.x, dy = b.y - a.y;
-            var needX = (a.w + b.w) / 2 + pad, needY = (a.h + b.h) / 2 + pad;
-            if (Math.abs(dx) < needX && Math.abs(dy) < needY) {
-              var ox = needX - Math.abs(dx), oy = needY - Math.abs(dy);
-              var ax = a.x, ay = a.y, bx = b.x, by = b.y;
-              if (ox < oy) {
-                var sx = (dx < 0 ? -1 : 1) * (ox / 2 + 0.5);
-                if (!dx) sx = (i % 2 ? 1 : -1) * (ox / 2 + 0.5);
-                a.x -= sx; b.x += sx;
-              } else {
-                var sy = (dy < 0 ? -1 : 1) * (oy / 2 + 0.5);
-                if (!dy) sy = (i % 2 ? 1 : -1) * (oy / 2 + 0.5);
-                a.y -= sy; b.y += sy;
-              }
-              if (hitsParent(a) || hitsParent(b) || hitsOther(a) || hitsOther(b)) {
-                a.x = ax; a.y = ay; b.x = bx; b.y = by;
-              } else {
-                moved = true;
-              }
-            }
-          }
-          pts[i].a = Math.atan2(pts[i].y - c.y, pts[i].x - c.x);
+    function clearRoom(dir) {
+      var room;
+      if (dir === 'R') room = (vis.x + vis.w) - (pb.x + pb.width);
+      else if (dir === 'L') room = pb.x - vis.x;
+      else if (dir === 'B') room = (vis.y + vis.h) - (pb.y + pb.height);
+      else room = pb.y - vis.y;
+      for (var oi = 0; oi < others.length; oi++) {
+        var o = others[oi];
+        if (dir === 'R' || dir === 'L') {
+          if (o.y + o.height < pb.y - 8 || o.y > pb.y + pb.height + 8) continue;
+          if (dir === 'R' && o.x >= pb.x + pb.width * 0.5) room = Math.min(room, o.x - (pb.x + pb.width));
+          if (dir === 'L' && o.x + o.width <= pb.x + pb.width * 0.5) room = Math.min(room, pb.x - (o.x + o.width));
+        } else {
+          if (o.x + o.width < pb.x - 8 || o.x > pb.x + pb.width + 8) continue;
+          if (dir === 'B' && o.y >= pb.y + pb.height * 0.5) room = Math.min(room, o.y - (pb.y + pb.height));
+          if (dir === 'T' && o.y + o.height <= pb.y + pb.height * 0.5) room = Math.min(room, pb.y - (o.y + o.height));
         }
-        if (!moved) break;
       }
-    })(chosen.pts);
+      return room;
+    }
+    var roomR = clearRoom('R'), roomL = clearRoom('L'), roomB = clearRoom('B'), roomT = clearRoom('T');
+    var sides = [
+      { name: 'R', room: roomR, ang: 0 },
+      { name: 'L', room: roomL, ang: Math.PI },
+      { name: 'B', room: roomB, ang: Math.PI / 2 },
+      { name: 'T', room: roomT, ang: -Math.PI / 2 }
+    ];
+    sides.sort(function (a, b) { return b.room - a.room; });
+
+    function packColumn(side, cols) {
+      var n = items.length;
+      var nCol = cols || 1;
+      var groups = [];
+      var per = Math.ceil(n / nCol);
+      for (var g = 0; g < nCol; g++) groups.push([]);
+      for (var i = 0; i < n; i++) groups[Math.floor(i / per) % nCol].push(i);
+      /* 尽量均分 */
+      if (nCol === 2) {
+        groups = [[], []];
+        for (var i2 = 0; i2 < n; i2++) groups[i2 % 2].push(i2);
+      }
+      var pts = new Array(n);
+      if (side.name === 'R' || side.name === 'L') {
+        var colW = [];
+        var colH = [];
+        for (var ci = 0; ci < groups.length; ci++) {
+          var mw = 0, th = 0;
+          for (var j = 0; j < groups[ci].length; j++) {
+            var it = items[groups[ci][j]];
+            if (it.vw > mw) mw = it.vw;
+            th += it.vh + (j ? gap : 0);
+          }
+          colW.push(mw); colH.push(th);
+        }
+        var totalW = colW.reduce(function (a, b) { return a + b; }, 0) + gap * (groups.length - 1);
+        var need = stem + totalW;
+        if (need > side.room + 4 * s) return null;
+        var x0 = side.name === 'R' ? (pb.x + pb.width + stem + colW[0] / 2)
+                                   : (pb.x - stem - colW[0] / 2);
+        for (var ci2 = 0; ci2 < groups.length; ci2++) {
+          var x = side.name === 'R'
+            ? (ci2 === 0 ? x0 : x0 + (colW[0] + colW[ci2]) / 2 + gap * ci2)
+            : (ci2 === 0 ? x0 : x0 - (colW[0] + colW[ci2]) / 2 - gap * ci2);
+          var th2 = colH[ci2];
+          var y = c.y - th2 / 2;
+          var minY = vis.y, maxY = vis.y + vis.h - th2;
+          if (maxY < minY) return null;
+          if (y < minY) y = minY;
+          if (y > maxY) y = maxY;
+          for (var j2 = 0; j2 < groups[ci2].length; j2++) {
+            var idx = groups[ci2][j2], it2 = items[idx];
+            y += it2.vh / 2;
+            pts[idx] = { x: x, y: y, vw: it2.vw, vh: it2.vh, w: it2.w, h: it2.h, f: it2.f };
+            y += it2.vh / 2 + gap;
+          }
+        }
+      } else {
+        var rowH = [];
+        var rowW = [];
+        for (var ri = 0; ri < groups.length; ri++) {
+          var mh = 0, twid = 0;
+          for (var j3 = 0; j3 < groups[ri].length; j3++) {
+            var it3 = items[groups[ri][j3]];
+            if (it3.vh > mh) mh = it3.vh;
+            twid += it3.vw + (j3 ? gap : 0);
+          }
+          rowH.push(mh); rowW.push(twid);
+        }
+        var totalH = rowH.reduce(function (a, b) { return a + b; }, 0) + gap * (groups.length - 1);
+        if (stem + totalH > side.room + 4 * s) return null;
+        var y0 = side.name === 'B' ? (pb.y + pb.height + stem + rowH[0] / 2)
+                                   : (pb.y - stem - rowH[0] / 2);
+        for (var ri2 = 0; ri2 < groups.length; ri2++) {
+          var yb = side.name === 'B'
+            ? (ri2 === 0 ? y0 : y0 + (rowH[0] + rowH[ri2]) / 2 + gap * ri2)
+            : (ri2 === 0 ? y0 : y0 - (rowH[0] + rowH[ri2]) / 2 - gap * ri2);
+          var tw2 = rowW[ri2];
+          var x = c.x - tw2 / 2;
+          var minX = vis.x, maxX = vis.x + vis.w - tw2;
+          if (maxX < minX) return null;
+          if (x < minX) x = minX;
+          if (x > maxX) x = maxX;
+          for (var j4 = 0; j4 < groups[ri2].length; j4++) {
+            var idx2 = groups[ri2][j4], it4 = items[idx2];
+            x += it4.vw / 2;
+            pts[idx2] = { x: x, y: yb, vw: it4.vw, vh: it4.vh, w: it4.w, h: it4.h, f: it4.f };
+            x += it4.vw / 2 + gap;
+          }
+        }
+      }
+      if (!pts.every(Boolean)) return null;
+      if (overlap(pts) || !inView(pts)) return null;
+      return finish(pts);
+    }
+
+    var chosen = null;
+    var tried;
+    for (var si = 0; si < sides.length && !chosen; si++) {
+      chosen = packColumn(sides[si], 1);
+      if (!chosen && items.length > 3) chosen = packColumn(sides[si], 2);
+    }
+
+    function packWrapped(side) {
+      var maxW, maxH;
+      if (side.name === 'T' || side.name === 'B') {
+        maxW = Math.max(40, vis.w - 8 * s);
+        var rows = [], row = [], rw = 0;
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          if (row.length && rw + gap + it.vw > maxW) { rows.push({ items: row, w: rw, h: 0 }); row = []; rw = 0; }
+          row.push(it);
+          rw += it.vw + (row.length > 1 ? gap : 0);
+        }
+        if (row.length) rows.push({ items: row, w: rw, h: 0 });
+        for (var r = 0; r < rows.length; r++) {
+          var mh = 0;
+          for (var j = 0; j < rows[r].items.length; j++) if (rows[r].items[j].vh > mh) mh = rows[r].items[j].vh;
+          rows[r].h = mh;
+        }
+        var totalH = 0;
+        for (var r2 = 0; r2 < rows.length; r2++) totalH += rows[r2].h + (r2 ? gap : 0);
+        var y0 = side.name === 'B' ? (pb.y + pb.height + stem) : (pb.y - stem - totalH);
+        var pts = new Array(items.length);
+        var y = y0;
+        var ii = 0;
+        for (var r3 = 0; r3 < rows.length; r3++) {
+          var rw2 = rows[r3].w;
+          var x = Math.max(vis.x, Math.min(c.x - rw2 / 2, vis.x + vis.w - rw2));
+          for (var j2 = 0; j2 < rows[r3].items.length; j2++) {
+            var it2 = rows[r3].items[j2];
+            x += it2.vw / 2;
+            pts[ii] = { x: x, y: y + rows[r3].h / 2, vw: it2.vw, vh: it2.vh, w: it2.w, h: it2.h, f: it2.f };
+            x += it2.vw / 2 + gap;
+            ii++;
+          }
+          y += rows[r3].h + gap;
+        }
+        return pts.every(Boolean) ? finish(pts) : null;
+      }
+      maxH = Math.max(40, vis.h - 8 * s);
+      var cols = [], col = [], ch = 0;
+      for (var i3 = 0; i3 < items.length; i3++) {
+        var it3 = items[i3];
+        if (col.length && ch + gap + it3.vh > maxH) { cols.push({ items: col, h: ch, w: 0 }); col = []; ch = 0; }
+        col.push(it3);
+        ch += it3.vh + (col.length > 1 ? gap : 0);
+      }
+      if (col.length) cols.push({ items: col, h: ch, w: 0 });
+      for (var c0 = 0; c0 < cols.length; c0++) {
+        var mw = 0;
+        for (var j3 = 0; j3 < cols[c0].items.length; j3++) if (cols[c0].items[j3].vw > mw) mw = cols[c0].items[j3].vw;
+        cols[c0].w = mw;
+      }
+      var totalW = 0;
+      for (var c1 = 0; c1 < cols.length; c1++) totalW += cols[c1].w + (c1 ? gap : 0);
+      var x0 = side.name === 'R' ? (pb.x + pb.width + stem) : (pb.x - stem - totalW);
+      var pts2 = new Array(items.length);
+      var x2 = x0;
+      var ii2 = 0;
+      for (var c2 = 0; c2 < cols.length; c2++) {
+        var ch2 = cols[c2].h;
+        var y2 = Math.max(vis.y, Math.min(c.y - ch2 / 2, vis.y + vis.h - ch2));
+        for (var j4 = 0; j4 < cols[c2].items.length; j4++) {
+          var it4 = cols[c2].items[j4];
+          y2 += it4.vh / 2;
+          pts2[ii2] = { x: x2 + cols[c2].w / 2, y: y2, vw: it4.vw, vh: it4.vh, w: it4.w, h: it4.h, f: it4.f };
+          y2 += it4.vh / 2 + gap;
+          ii2++;
+        }
+        x2 += cols[c2].w + gap;
+      }
+      return pts2.every(Boolean) ? finish(pts2) : null;
+    }
+
+    if (!chosen) {
+      for (var wi = 0; wi < sides.length && !chosen; wi++) {
+        var wrapped = packWrapped(sides[wi]);
+        if (wrapped && !overlapsParent(wrapped.pts) && inView(wrapped.pts)) chosen = wrapped;
+        else if (wrapped && !overlapsParent(wrapped.pts) && !chosen) chosen = wrapped; /* 优先不压专题，允许略出画框 */
+
+      }
+    }
+
+    if (!chosen) {
+      /* 退回扇形：朝向空隙最大的一侧，用视觉尺寸 */
+      var heading = sides[0].ang;
+      var o = mapCenter();
+      var outward = Math.atan2(c.y - o.y, c.x - o.x);
+      var heads = [sides[0].ang, sides[1].ang, outward, outward + 0.5, outward - 0.5];
+      function fan(h, r) {
+        var n = items.length;
+        var tree = d3.hierarchy({ children: items.map(function (_, i) { return { i: i }; }) });
+        var need = 0;
+        for (var i = 0; i < n; i++) need += items[i].vw + 12 * s;
+        var span = n <= 1 ? 0.001 : Math.min(2.6, need / Math.max(r, 1));
+        d3.cluster().size([span, r])(tree);
+        var pts = new Array(n);
+        tree.leaves().forEach(function (d) {
+          var i2 = d.data.i;
+          var ang = n === 1 ? h : (h - span / 2 + d.x);
+          pts[i2] = {
+            x: c.x + d.y * Math.cos(ang),
+            y: c.y + d.y * Math.sin(ang),
+            vw: items[i2].vw, vh: items[i2].vh,
+            w: items[i2].w, h: items[i2].h, f: items[i2].f
+          };
+        });
+        return pts;
+      }
+      var r0 = Math.max(pb.width, pb.height) / 2 + stem + items[0].vw / 2;
+      for (var hi = 0; hi < heads.length && !chosen; hi++) {
+        for (var step = 0; step < 10 && !chosen; step++) {
+          var pts = fan(heads[hi], r0 + step * 16 * s);
+          if (!overlap(pts) && inView(pts)) chosen = finish(pts);
+        }
+      }
+      if (!chosen) {
+        /* 最后：先钳进视野，再把压到专题框上的节点推到空隙最大的一边 */
+        function clampPt(p) {
+          p.x = Math.max(vis.x + p.vw / 2, Math.min(p.x, vis.x + vis.w - p.vw / 2));
+          p.y = Math.max(vis.y + p.vh / 2, Math.min(p.y, vis.y + vis.h - p.vh / 2));
+        }
+        function shoveOff(pts) {
+          var candidates = [
+            { name: 'R', x: function (p) { return pb.x + pb.width + stem + p.vw / 2; }, y: function (p) { return p.y; } },
+            { name: 'L', x: function (p) { return pb.x - stem - p.vw / 2; }, y: function (p) { return p.y; } },
+            { name: 'B', x: function (p) { return p.x; }, y: function (p) { return pb.y + pb.height + stem + p.vh / 2; } },
+            { name: 'T', x: function (p) { return p.x; }, y: function (p) { return pb.y - stem - p.vh / 2; } }
+          ];
+          candidates.sort(function (a, b) {
+            var ra = sides.filter(function (s) { return s.name === a.name; })[0];
+            var rb = sides.filter(function (s) { return s.name === b.name; })[0];
+            return (rb ? rb.room : 0) - (ra ? ra.room : 0);
+          });
+          for (var i = 0; i < pts.length; i++) {
+            var p = pts[i];
+            if (!hitsRect(p, pb, 8 * s)) continue;
+            for (var ci = 0; ci < candidates.length; ci++) {
+              var q = { x: candidates[ci].x(p), y: candidates[ci].y(p), vw: p.vw, vh: p.vh, w: p.w, h: p.h, f: p.f };
+              clampPt(q);
+              if (!hitsRect(q, pb, 4 * s)) { pts[i] = q; break; }
+            }
+            if (hitsRect(pts[i], pb, 4 * s)) clampPt(pts[i]);
+          }
+        }
+        var pts2 = fan(sides[0].ang, r0 + 20 * s);
+        for (var k = 0; k < pts2.length; k++) clampPt(pts2[k]);
+        shoveOff(pts2);
+        /* 若仍压在专题上，改沿空隙最大的一侧紧凑排列（允许略超出后再钳） */
+        if (overlap(pts2)) {
+          var tight = packColumn(sides[0], items.length > 3 ? 2 : 1);
+          if (!tight) {
+            var saved = sides[0].room;
+            sides[0].room = 1e9;
+            tight = packColumn(sides[0], items.length > 3 ? 2 : 1);
+            sides[0].room = saved;
+          }
+          if (tight) {
+            chosen = tight;
+          } else {
+            shoveOff(pts2);
+            chosen = finish(pts2);
+          }
+        } else {
+          chosen = finish(pts2);
+        }
+      }
+    }
+    return chosen;
+  }
+
+  function rayEdge(cx0, cy0, hw, hh, ang) {
+    var dx = Math.cos(ang), dy = Math.sin(ang);
+    var tx = !dx ? 1e9 : hw / Math.abs(dx);
+    var ty = !dy ? 1e9 : hh / Math.abs(dy);
+    var tt = Math.min(tx, ty);
+    return { x: cx0 + tt * dx, y: cy0 + tt * dy };
+  }
+
+  function branchEnds(c, pb, pt) {
+    var ang = Math.atan2(pt.y - c.y, pt.x - c.x);
+    var p0 = rayEdge(c.x, c.y, pb.width / 2 + 1, pb.height / 2 + 1, ang);
+    var back = Math.atan2(c.y - pt.y, c.x - pt.x);
+    var p1 = rayEdge(pt.x, pt.y, pt.vw / 2 + 1, pt.vh / 2 + 1, back);
+    return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+  }
+
+  function writeBranch(br, ends, s) {
+    var w0 = Math.max(0.55, 1.8 * s), w1 = Math.max(0.22, 0.4 * s);
+    br.setAttribute('d', taperPath(ends.x0, ends.y0, ends.x1, ends.y1, w0, w1));
+    br.setAttribute('data-x0', ends.x0.toFixed(2));
+    br.setAttribute('data-y0', ends.y0.toFixed(2));
+    br.setAttribute('data-x1', ends.x1.toFixed(2));
+    br.setAttribute('data-y1', ends.y1.toFixed(2));
+  }
+
+  function writeNodePos(node, pt, grow) {
+    if (grow == null) grow = node.classList.contains('mp-in') || kidsPhase === 'on' ? 1 : 0.72;
+    node.setAttribute('data-cx', pt.x.toFixed(2));
+    node.setAttribute('data-cy', pt.y.toFixed(2));
+    node.setAttribute('data-s', pt.s.toFixed(4));
+    node.setAttribute('data-vw', pt.vw.toFixed(2));
+    node.setAttribute('data-vh', pt.vh.toFixed(2));
+    var gi = node.querySelector('.mp-subg') || node;
+    gi.setAttribute('transform', 'translate(' + pt.x + ' ' + pt.y + ') scale(' + (pt.s * grow).toFixed(4) + ')');
+  }
+
+  function applyKidPositions(g, layout, opts) {
+    opts = opts || {};
+    if (!g || !layout) return;
+    var nodes = g.querySelectorAll('a.mp-sub');
+    var inst = !!(opts.instant || reduced());
+    var grow = (kidsPhase === 'on' || opts.grown) ? 1 : (opts.grow != null ? opts.grow : 0);
+    var dest = layout.pts;
+    if (inst || !opts.animate || reduced()) {
+      if (reflowAnim) { cancelAnimationFrame(reflowAnim); reflowAnim = null; }
+      Array.prototype.forEach.call(nodes, function (node) {
+        var i = +node.getAttribute('data-i');
+        writeNodePos(node, dest[i], kidsPhase === 'on' || kidsPhase === 'opening' && node.classList.contains('mp-in') ? 1 : (kidsPhase === 'on' ? 1 : null));
+        var br = g.querySelector('.mp-subbr[data-i="' + i + '"]');
+        if (br) writeBranch(br, branchEnds(layout.c, layout.pb, dest[i]), layout.s);
+      });
+      /* opening 时保留当前生长进度，由 setKidsProgress 接着播 */
+      if (kidsPhase === 'on') {
+        Array.prototype.forEach.call(nodes, function (node) {
+          var i = +node.getAttribute('data-i');
+          writeNodePos(node, dest[i], 1);
+        });
+      }
+      return;
+    }
+    var from = [];
+    Array.prototype.forEach.call(nodes, function (node) {
+      var i = +node.getAttribute('data-i');
+      var br = g.querySelector('.mp-subbr[data-i="' + i + '"]');
+      from[i] = {
+        x: +node.getAttribute('data-cx'), y: +node.getAttribute('data-cy'), s: +node.getAttribute('data-s') || layout.s,
+        x0: br ? +br.getAttribute('data-x0') : dest[i].x,
+        y0: br ? +br.getAttribute('data-y0') : dest[i].y,
+        x1: br ? +br.getAttribute('data-x1') : dest[i].x,
+        y1: br ? +br.getAttribute('data-y1') : dest[i].y
+      };
+    });
+    if (reflowAnim) { cancelAnimationFrame(reflowAnim); reflowAnim = null; }
+    var t0 = performance.now(), dur = 340;
+    function lerp(a, b, e) { return a + (b - a) * e; }
+    (function tick(now) {
+      var u = Math.min(1, (now - t0) / dur);
+      var e = easeOutCubic(u);
+      Array.prototype.forEach.call(nodes, function (node) {
+        var i = +node.getAttribute('data-i');
+        var a = from[i], b = dest[i];
+        var pt = {
+          x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e),
+          s: lerp(a.s, b.s, e),
+          vw: lerp((+node.getAttribute('data-vw') || b.vw), b.vw, e),
+          vh: lerp((+node.getAttribute('data-vh') || b.vh), b.vh, e),
+          w: b.w, h: b.h, f: b.f
+        };
+        writeNodePos(node, pt, 1);
+        var br = g.querySelector('.mp-subbr[data-i="' + i + '"]');
+        if (br) {
+          var ends = {
+            x0: lerp(a.x0, branchEnds(layout.c, layout.pb, b).x0, e),
+            y0: lerp(a.y0, branchEnds(layout.c, layout.pb, b).y0, e),
+            x1: lerp(a.x1, branchEnds(layout.c, layout.pb, b).x1, e),
+            y1: lerp(a.y1, branchEnds(layout.c, layout.pb, b).y1, e)
+          };
+          writeBranch(br, ends, pt.s);
+        }
+      });
+      if (u < 1) reflowAnim = requestAnimationFrame(tick);
+      else {
+        reflowAnim = null;
+        Array.prototype.forEach.call(nodes, function (node) {
+          var i = +node.getAttribute('data-i');
+          writeNodePos(node, dest[i], 1);
+          var br = g.querySelector('.mp-subbr[data-i="' + i + '"]');
+          if (br) writeBranch(br, branchEnds(layout.c, layout.pb, dest[i]), layout.s);
+        });
+      }
+    })(t0);
+  }
+
+  function reflowKids(opts) {
+    opts = opts || {};
+    if (kidsPhase !== 'on') return;
+    var g = cam.querySelector('.mp-subs');
+    if (!g || !shownSlug) return;
+    var parent = svg.querySelector('a.mp-tn[data-slug="' + shownSlug + '"]');
+    if (!parent) return;
+    var layout = computeKidLayout(parent);
+    if (!layout) return;
+    applyKidPositions(g, layout, { animate: !opts.instant && !reduced(), instant: !!opts.instant || reduced() });
+  }
+
+  function scheduleReflow(opts) {
+    opts = opts || {};
+    if (reflowTimer) { clearTimeout(reflowTimer); reflowTimer = null; }
+    if (kidsPhase !== 'on') return;
+    if (reduced() || opts.instant || opts.flush) {
+      reflowKids({ instant: reduced() || opts.instant });
+      return;
+    }
+    reflowTimer = setTimeout(function () {
+      reflowTimer = null;
+      reflowKids({ instant: false });
+    }, 120);
+  }
+
+  function placeKids(parent) {
+    var slug = parent.getAttribute('data-slug');
+    var kids = kidsFor(slug);
+    var existing = cam.querySelector('.mp-subs');
+    if (!kids.length) {
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      shownSlug = null;
+      return null;
+    }
+    var layout = computeKidLayout(parent);
+    if (!layout) return null;
+    var ch = parent.getAttribute('data-ch') || '';
+
+    if (existing && existing.getAttribute('data-slug') === slug &&
+        existing.querySelectorAll('a.mp-sub').length === kids.length) {
+      shownSlug = slug;
+      applyKidPositions(existing, layout, { animate: false, instant: true });
+      return existing;
+    }
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'mp-subs mp-c' + ch);
+    g.setAttribute('data-slug', slug);
+    cam.appendChild(g);
+    var geom = { c: layout.c, pb: layout.pb };
 
     kids.forEach(function (kid, i) {
-      var pt = chosen.pts[i];
-      var x = pt.x, y = pt.y, bw = pt.w, bh = pt.h;
-      var bx = x - bw / 2, by = y - bh / 2;
+      var pt = layout.pts[i];
       var a = document.createElementNS(NS, 'a');
       a.setAttribute('class', 'mp-d mp-sub mp-c' + ch);
       a.setAttribute('data-ch', ch);
       a.setAttribute('data-slug', slug);
+      a.setAttribute('data-i', String(i));
       if (kid.id) a.setAttribute('data-sid', kid.id);
       a.setAttribute('data-title', kid.zh);
       a.setAttribute('href', kid.href || ('topics/' + slug + '/'));
@@ -757,56 +1125,51 @@
       a.setAttribute('aria-label', lab);
       a.setAttribute('tabindex', '-1');
       var dispF = pt.f || '';
+      var bw = pt.w, bh = pt.h;
       var hitW = Math.max(bw, 80), hitH = Math.max(bh, 64);
-      /* 树枝从父框外缘接到子框内侧，不画进父框，也不放进 <a> */
-      function rayEdge(cx0, cy0, hw, hh, ang) {
-        var dx = Math.cos(ang), dy = Math.sin(ang);
-        var tx = !dx ? 1e9 : hw / Math.abs(dx);
-        var ty = !dy ? 1e9 : hh / Math.abs(dy);
-        var tt = Math.min(tx, ty);
-        return { x: cx0 + tt * dx, y: cy0 + tt * dy };
-      }
-      var p0 = rayEdge(c.x, c.y, pb.width / 2 + 1, pb.height / 2 + 1, pt.a);
-      var back = Math.atan2(c.y - y, c.x - x);
-      var p1 = rayEdge(x, y, bw / 2 + 1, bh / 2 + 1, back);
-      var x0 = p0.x, y0 = p0.y, innerX = p1.x, innerY = p1.y;
+      var ends = branchEnds(geom.c, geom.pb, pt);
       var br = document.createElementNS(NS, 'path');
       br.setAttribute('class', 'mp-subbr');
-      br.setAttribute('d', taperPath(x0, y0, innerX, innerY, 1.8, 0.4));
-      br.setAttribute('data-x0', x0.toFixed(2));
-      br.setAttribute('data-y0', y0.toFixed(2));
+      br.setAttribute('data-i', String(i));
       br.style.opacity = '0';
       br.setAttribute('aria-hidden', 'true');
       br.setAttribute('pointer-events', 'none');
-      g.insertBefore(br, g.firstChild);
+      writeBranch(br, ends, layout.s);
+      g.appendChild(br);
+
+      var gi = document.createElementNS(NS, 'g');
+      gi.setAttribute('class', 'mp-subg');
       var hit = document.createElementNS(NS, 'rect');
       hit.setAttribute('class', 'mp-hit');
-      hit.setAttribute('x', (x - hitW / 2).toFixed(1));
-      hit.setAttribute('y', (y - hitH / 2).toFixed(1));
+      hit.setAttribute('x', (-hitW / 2).toFixed(1));
+      hit.setAttribute('y', (-hitH / 2).toFixed(1));
       hit.setAttribute('width', hitW.toFixed(1));
       hit.setAttribute('height', hitH.toFixed(1));
       var rect = document.createElementNS(NS, 'rect');
       rect.setAttribute('class', 'mp-box');
-      rect.setAttribute('x', bx.toFixed(1));
-      rect.setAttribute('y', by.toFixed(1));
+      rect.setAttribute('x', (-bw / 2).toFixed(1));
+      rect.setAttribute('y', (-bh / 2).toFixed(1));
       rect.setAttribute('width', bw.toFixed(1));
       rect.setAttribute('height', bh.toFixed(1));
       var title = document.createElementNS(NS, 'text');
       title.setAttribute('class', 'mp-t');
-      title.setAttribute('x', x.toFixed(1));
-      title.setAttribute('y', (y + (dispF ? -4 : 4)).toFixed(1));
+      title.setAttribute('x', '0');
+      title.setAttribute('y', dispF ? '-4' : '4');
       title.setAttribute('text-anchor', 'middle');
       title.textContent = kid.zh;
-      a.appendChild(hit); a.appendChild(rect); a.appendChild(title);
+      gi.appendChild(hit); gi.appendChild(rect); gi.appendChild(title);
       if (dispF) {
         var ft = document.createElementNS(NS, 'text');
         ft.setAttribute('class', 'mp-f');
-        ft.setAttribute('x', x.toFixed(1));
-        ft.setAttribute('y', (y + 13).toFixed(1));
+        ft.setAttribute('x', '0');
+        ft.setAttribute('y', '13');
         ft.setAttribute('text-anchor', 'middle');
         ft.textContent = dispF;
-        a.appendChild(ft);
+        gi.appendChild(ft);
       }
+      a.appendChild(gi);
+      writeNodePos(a, pt, 0.72);
+      a.style.opacity = '0';
       g.appendChild(a);
     });
     shownSlug = slug;
@@ -818,34 +1181,46 @@
 
   function hideKids() { retractKids({ instant: true }); }
 
-  /* 用小节框的属性算包围盒，不受生长动画的 scale(0) 影响 */
+  /* 用视觉尺寸（含 1/k 反缩放）算包围盒 */
   function unionBox(el) {
     var b = el.getBBox();
     var g = cam.querySelector('.mp-subs');
     if (!g) return b;
     var x = b.x, y = b.y, r = b.x + b.width, bo = b.y + b.height;
-    Array.prototype.forEach.call(g.querySelectorAll('a.mp-sub .mp-box'), function (rect) {
-      var rx = +rect.getAttribute('x'), ry = +rect.getAttribute('y');
-      var rw = +rect.getAttribute('width'), rh = +rect.getAttribute('height');
-      x = Math.min(x, rx); y = Math.min(y, ry);
-      r = Math.max(r, rx + rw); bo = Math.max(bo, ry + rh);
+    Array.prototype.forEach.call(g.querySelectorAll('a.mp-sub'), function (node) {
+      var cx = +node.getAttribute('data-cx'), cy = +node.getAttribute('data-cy');
+      var vw = +node.getAttribute('data-vw'), vh = +node.getAttribute('data-vh');
+      if (!vw) return;
+      x = Math.min(x, cx - vw / 2); y = Math.min(y, cy - vh / 2);
+      r = Math.max(r, cx + vw / 2); bo = Math.max(bo, cy + vh / 2);
     });
     return { x: x, y: y, width: r - x, height: bo - y };
   }
 
   function unionOverflows(topic) {
     var box = unionBox(topic);
-    var vis = visibleUserRect();
-    var pad = 20;
-    return box.x < vis.x + pad || box.y < vis.y + pad ||
-      box.x + box.width > vis.x + vis.w - pad ||
-      box.y + box.height > vis.y + vis.h * 0.70;
+    var vis = visibleLayoutRect();
+    return box.x < vis.x || box.y < vis.y ||
+      box.x + box.width > vis.x + vis.w ||
+      box.y + box.height > vis.y + vis.h;
   }
 
   function fitUnion(topic) {
+    /* 视野内重排优先，镜头只做极小平移，不改倍率 */
     if (!cam.querySelector('.mp-subs')) return false;
     if (!unionOverflows(topic)) return false;
-    frameBox(unionBox(topic), 'topic');
+    var box = unionBox(topic);
+    var vis = visibleUserRect();
+    var dx = 0, dy = 0;
+    if (box.x < vis.x + 12) dx = (vis.x + 12) - box.x;
+    if (box.x + box.width > vis.x + vis.w - 12) dx = (vis.x + vis.w - 12) - (box.x + box.width);
+    if (box.y < vis.y + 12) dy = (vis.y + 12) - box.y;
+    if (box.y + box.height > vis.y + vis.h * 0.70) dy = (vis.y + vis.h * 0.70) - (box.y + box.height);
+    if (!dx && !dy) return false;
+    /* 用户坐标平移 vis 等价于相机 tx/ty 增减 dx*k */
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    st.tx += dx * k;
+    st.ty += dy * k;
     return true;
   }
 
@@ -872,7 +1247,9 @@
       if (t <= 0) { kidsVisible = false; kidsPhase = 'off'; root.classList.remove('mp-kids-grown'); }
     },
     cam: function () { return { k: cam._cur.k, tx: cam._cur.tx, ty: cam._cur.ty, tk: st.k, ttx: st.tx, tty: st.ty }; },
-    motion: function () { return root.getAttribute('data-motion'); }
+    motion: function () { return root.getAttribute('data-motion'); },
+    reflow: function (instant) { reflowKids({ instant: !!instant }); },
+    kidScale: kidScale
   };
 
   function nearestTopic(pt, maxd) {
@@ -996,7 +1373,7 @@
     applyCam(!opts.instant && !reduced(), function () {
       lodHold = false;
       if (focused !== a) return;
-      revealForTopic(a, { instant: reduced() || opts.instant });
+      revealForTopic(a, { instant: reduced() || opts.instant, fit: false });
     });
   }
 
@@ -1081,16 +1458,16 @@
   }
   placeStars();
 
-  /* 漂浮：d3-force 把节点轻轻推离作者坐标，再用 forceX/Y 拉回，位移限制在约 9 用户单位。 */
-  var driftSim = null;
-  var driftNodes = [];
+  /* 漂浮：每个节点 8.2–13.8 秒一个来回的正弦摆动，幅度约 4.2–5.9 用户单位。不用 d3-force 随机撞击。 */
+  var driftTick = null;
+  var driftItems = [];
+  function stopDrift() {
+    if (driftTick) { cancelAnimationFrame(driftTick); driftTick = null; }
+  }
   function clearDriftTransforms() {
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn'), function (n) {
       n.removeAttribute('transform');
     });
-  }
-  function stopDrift() {
-    if (driftSim) { driftSim.stop(); driftSim = null; }
   }
   function armDrift() {
     stopDrift();
@@ -1100,47 +1477,36 @@
       clearDriftTransforms();
       return;
     }
-    driftNodes = [];
+    driftItems = [];
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn'), function (n, i) {
-      var c = topicCenter(n);
-      driftNodes.push({
+      var period = 8.2 + (i * 1.13) % 5.6;
+      var amp = 4.2 + (i % 4) * 0.55;
+      driftItems.push({
         el: n,
-        x: c.x, y: c.y,
-        x0: c.x, y0: c.y,
-        vx: (i % 2 ? 1 : -1) * 0.35,
-        vy: (i % 3 === 0 ? 1 : -1) * 0.28
+        ax: (i % 2 ? 1 : -1) * amp,
+        ay: (i % 3 === 0 ? 1 : i % 3 === 1 ? -1 : 0.7) * amp * 0.72,
+        p1: period,
+        p2: period * 1.18,
+        ph: i * 0.73
       });
-      var ang = i * 1.17, rad = 5.5 + (i % 3) * 1.2;
-      driftNodes[driftNodes.length - 1].x = c.x + rad * Math.cos(ang);
-      driftNodes[driftNodes.length - 1].y = c.y + rad * Math.sin(ang);
     });
     root.classList.add('mp-live');
     root.setAttribute('data-motion', 'live');
-    function brownian() {
-      for (var i = 0; i < driftNodes.length; i++) {
-        var d = driftNodes[i];
-        d.vx += (Math.random() - 0.5) * 0.55;
-        d.vy += (Math.random() - 0.5) * 0.55;
-      }
-    }
-    driftSim = d3.forceSimulation(driftNodes)
-      .force('x', d3.forceX(function (d) { return d.x0; }).strength(0.045))
-      .force('y', d3.forceY(function (d) { return d.y0; }).strength(0.045))
-      .force('brownian', brownian)
-      .velocityDecay(0.18)
-      .alpha(0.2)
-      .alphaDecay(0)
-      .alphaTarget(0.14)
-      .on('tick', function () {
-        for (var i = 0; i < driftNodes.length; i++) {
-          var d = driftNodes[i];
-          var dx = d.x - d.x0, dy = d.y - d.y0;
-          var m = Math.hypot(dx, dy), cap = 9;
-          if (m > cap) { dx = dx * cap / m; dy = dy * cap / m; d.x = d.x0 + dx; d.y = d.y0 + dy; }
-          if (d.el.classList.contains('mp-now')) d.el.setAttribute('transform', 'translate(0 0)');
-          else d.el.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')');
+    (function tick(now) {
+      if (reduced()) { driftTick = null; return; }
+      var t = now / 1000;
+      for (var i = 0; i < driftItems.length; i++) {
+        var it = driftItems[i];
+        if (it.el.classList.contains('mp-now')) {
+          it.el.setAttribute('transform', 'translate(0 0)');
+          continue;
         }
-      });
+        var dx = it.ax * Math.sin((t * Math.PI * 2) / it.p1 + it.ph);
+        var dy = it.ay * Math.sin((t * Math.PI * 2) / it.p2 + it.ph * 1.15);
+        it.el.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')');
+      }
+      driftTick = requestAnimationFrame(tick);
+    })(performance.now());
   }
   armDrift();
   if (RM && RM.addEventListener) RM.addEventListener('change', function () {
@@ -1169,7 +1535,7 @@
   }
 
   svg.addEventListener('click', function (e) {
-    if (moved && !nodeAnchor(e.target)) { e.preventDefault(); return; }
+    if ((moved || justDragged) && !nodeAnchor(e.target)) { e.preventDefault(); return; }
     var a = nodeAnchor(e.target);
     if (a) {
       if (modifierClick(e)) return; /* 让浏览器按链接打开 */

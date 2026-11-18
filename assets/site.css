@@ -830,11 +830,8 @@ body.contents {
 #map .mp-sub {
   opacity: 0;
   pointer-events: none;
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: scale(.72);
 }
-#map .mp-sub.mp-in { opacity: 1; pointer-events: auto; transform: scale(1); }
+#map .mp-sub.mp-in { opacity: 1; pointer-events: auto; }
 #map .mp-sub .mp-box {
   fill: var(--surface);
   stroke: var(--c, var(--ink-3));
