@@ -1,6 +1,6 @@
 /* 首页知识导图（四站同一份 assets/map.js）
    - 悬停 / 键盘经过：无关分支调淡（.mp-off）；聚焦某节点时锁定在该节点
-   - 单击章 / 专题：平滑放大并显示图鉴式说明卡（简介来自 #mp-data，不新编）
+   - 单击章：把该章的专题重新围成一圈（或弧），镜头对准章心，其它章淡出；再点专题则小节围着专题成环\n   - 单击专题：平滑放大并显示图鉴式说明卡（简介来自 #mp-data，不新编）
      Ctrl/⌘/Shift/中键单击仍按链接打开对应页
    - 空白处、说明卡「返回」、Esc：还原
    - 滚轮：默认需按住 Ctrl 或 ⌘（避免抢走页面滚动）；点进图中（.mp-engaged）后可直接滚动缩放、拖动平移
@@ -768,7 +768,79 @@
       return finish(pts);
     }
 
-    var chosen = null;
+
+    function packKidRadial() {
+      var n = items.length;
+      if (!n) return null;
+      var maxHalf = 0;
+      for (var i = 0; i < n; i++) {
+        var hh = Math.hypot(items[i].vw, items[i].vh) / 2;
+        if (hh > maxHalf) maxHalf = hh;
+      }
+      var inner = Math.max(pb.width, pb.height) / 2 + 22 * s;
+      var minR = inner + maxHalf + 16 * s;
+      var need = maxHalf * 2 + 16 * s;
+      var nInner = n > 10 ? Math.ceil(n / 2) : n;
+      var Rchord = nInner <= 1 ? minR : need / (2 * Math.sin(Math.PI / nInner));
+      var R = Math.max(minR, Rchord);
+      var maxR = Math.min(
+        c.x - vis.x, vis.x + vis.w - c.x,
+        c.y - vis.y, vis.y + vis.h - c.y
+      ) - maxHalf - 8 * s;
+      var kind = 'ring';
+      if (maxR < minR * 0.6) return null;
+      if (R > maxR + 2 && n <= 10) { kind = 'arc'; R = Math.max(minR, maxR); }
+      if (n > 10) R = Math.min(R, Math.max(minR, maxR * 0.7));
+      else if (maxR > minR) R = Math.min(Math.max(R, minR * 1.12), maxR * 0.78);
+      var start = -Math.PI / 2;
+      /* 朝空位最大的一侧作为弧的朝向 / 环的起始参考 */
+      if (kind === 'arc') start = sides[0].ang;
+      function ptsAt(radius, count, phase, offset, take) {
+        var step, a0;
+        if (kind === 'arc' && count > 1) {
+          var span = Math.min(Math.PI * 1.2, 2.6);
+          step = span / (count - 1);
+          a0 = phase - span / 2;
+        } else if (count <= 1) {
+          step = 0; a0 = phase;
+        } else {
+          step = Math.PI * 2 / count;
+          a0 = phase;
+        }
+        var pts = [];
+        for (var j = 0; j < take.length; j++) {
+          var it = items[take[j]];
+          var ang = a0 + step * j;
+          pts.push({ x: c.x + radius * Math.cos(ang), y: c.y + radius * Math.sin(ang), vw: it.vw, vh: it.vh, w: it.w, h: it.h, f: it.f, i: take[j] });
+        }
+        return pts;
+      }
+      var pts;
+      if (n > 10) {
+        var n1 = Math.ceil(n / 2);
+        var idx1 = [], idx2 = [];
+        for (var k = 0; k < n; k++) (k < n1 ? idx1 : idx2).push(k);
+        pts = ptsAt(R, n1, start, 0, idx1).concat(ptsAt(R * 1.42, n - n1, start + Math.PI / Math.max(n - n1, 1), 0, idx2));
+        var ordered = new Array(n);
+        for (var p = 0; p < pts.length; p++) ordered[pts[p].i] = pts[p];
+        pts = ordered;
+      } else {
+        var idx = [];
+        for (var i2 = 0; i2 < n; i2++) idx.push(i2);
+        pts = ptsAt(R, n, start, 0, idx);
+      }
+      if (!pts.every(Boolean)) return null;
+      if (overlapsParent(pts)) return null;
+      /* 环上允许略微靠近邻居，但不画出视野 */
+      if (!inView(pts) && kind === 'ring') {
+        kind = 'arc';
+        return null;
+      }
+      if (!inView(pts)) return null;
+      return finish(pts);
+    }
+
+    var chosen = packKidRadial();
     var tried;
     for (var si = 0; si < sides.length && !chosen; si++) {
       chosen = packColumn(sides[si], 1);
@@ -1277,9 +1349,590 @@
     if (focused && focused.classList.contains('mp-tn')) return focused;
     return nearestTopic(viewCenterUser(), 260);
   }
+
+  function easeInOutCubic(u) {
+    return u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+  }
+
+  /* ---------- 章 / 专题环绕重排 ---------- */
+  var CH_IN = 1.52, CH_OUT = 1.18;
+  var CH_TOPIC_IN = 2.35, CH_TOPIC_OUT = 1.95;
+  var radialMode = 'off'; /* off | chapter | topic */
+  var radialCh = null;
+  var radialViaChapter = false;
+  var layoutAnim = null;
+  var spokeLayer = null;
+
+  function homeCenter(el) {
+    if (el.__home) return el.__home;
+    var star = el.querySelector('.mp-star');
+    if (star && star.getAttribute('cx')) {
+      el.__home = { x: +star.getAttribute('cx'), y: +star.getAttribute('cy') };
+      return el.__home;
+    }
+    var cir = el.querySelector('.mp-nr, .mp-nb, .mp-rr, .mp-rb, circle');
+    if (cir && cir.getAttribute('cx')) {
+      el.__home = { x: +cir.getAttribute('cx'), y: +cir.getAttribute('cy') };
+      return el.__home;
+    }
+    var box = el.querySelector('.mp-box');
+    if (box && box.getAttribute('x')) {
+      el.__home = {
+        x: +box.getAttribute('x') + (+box.getAttribute('width') || 0) / 2,
+        y: +box.getAttribute('y') + (+box.getAttribute('height') || 0) / 2
+      };
+      return el.__home;
+    }
+    try {
+      var b = el.getBBox();
+      el.__home = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    } catch (err) {
+      el.__home = { x: 0, y: 0 };
+    }
+    return el.__home;
+  }
+
+  function boxCenter(el) {
+    var box = el.querySelector('.mp-box');
+    if (box && box.getAttribute('x')) {
+      return {
+        x: +box.getAttribute('x') + (+box.getAttribute('width') || 0) / 2,
+        y: +box.getAttribute('y') + (+box.getAttribute('height') || 0) / 2
+      };
+    }
+    return homeCenter(el);
+  }
+
+  function nodeBoxSize(el) {
+    var box = el.querySelector('.mp-box');
+    if (box && box.getAttribute('width')) {
+      return { w: +box.getAttribute('width'), h: +box.getAttribute('height') };
+    }
+    var cir = el.querySelector('.mp-nb, .mp-nr, .mp-rb, circle');
+    if (cir && cir.getAttribute('r')) {
+      var r = +cir.getAttribute('r');
+      return { w: r * 2, h: r * 2 };
+    }
+    try {
+      var b = el.getBBox();
+      return { w: b.width, h: b.height };
+    } catch (err) {
+      return { w: 80, h: 40 };
+    }
+  }
+
+  function layoutOf(el) {
+    return {
+      dx: +el.getAttribute('data-ldx') || 0,
+      dy: +el.getAttribute('data-ldy') || 0,
+      s: el.hasAttribute('data-ls') ? +el.getAttribute('data-ls') : 1
+    };
+  }
+
+  function ensureLayWrap(el) {
+    var g = null;
+    for (var i = 0; i < el.childNodes.length; i++) {
+      var n = el.childNodes[i];
+      if (n.nodeType === 1 && (n.getAttribute('class') || '') === 'mp-lay') { g = n; break; }
+    }
+    if (g) return g;
+    g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'mp-lay');
+    while (el.firstChild) g.appendChild(el.firstChild);
+    el.appendChild(g);
+    return g;
+  }
+
+  function applyNodeTF(el, driftX, driftY) {
+    var L = layoutOf(el);
+    var c = homeCenter(el);
+    var dx = L.dx + (driftX || 0);
+    var dy = L.dy + (driftY || 0);
+    var s = L.s;
+    var t = 'translate(' + (c.x + dx) + ' ' + (c.y + dy) + ')';
+    if (Math.abs(s - 1) > 0.001) t += ' scale(' + s.toFixed(4) + ')';
+    t += ' translate(' + (-c.x) + ' ' + (-c.y) + ')';
+    var g = ensureLayWrap(el);
+    g.setAttribute('transform', t);
+    el.removeAttribute('transform');
+  }
+
+  function writeLayout(el, dx, dy, s) {
+    el.setAttribute('data-ldx', dx.toFixed(3));
+    el.setAttribute('data-ldy', dy.toFixed(3));
+    el.setAttribute('data-ls', s.toFixed(4));
+    applyNodeTF(el, 0, 0);
+  }
+
+  function layoutNodes() {
+    return svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root');
+  }
+
+  function cancelLayoutAnim() {
+    if (layoutAnim) { cancelAnimationFrame(layoutAnim); layoutAnim = null; }
+  }
+
+  function animateLayouts(targets, opts, onDone) {
+    opts = opts || {};
+    cancelLayoutAnim();
+    var inst = !!(opts.instant || reduced());
+    if (inst) {
+      for (var i = 0; i < targets.length; i++) {
+        writeLayout(targets[i].el, targets[i].dx, targets[i].dy, targets[i].s);
+      }
+      if (onDone) onDone();
+      return;
+    }
+    var from = [];
+    for (var j = 0; j < targets.length; j++) {
+      var L = layoutOf(targets[j].el);
+      from.push({ dx: L.dx, dy: L.dy, s: L.s });
+    }
+    var t0 = performance.now();
+    var dur = 560;
+    (function tick(now) {
+      var u = Math.min(1, (now - t0) / dur);
+      var e = easeInOutCubic(u);
+      for (var i = 0; i < targets.length; i++) {
+        var a = from[i], b = targets[i];
+        writeLayout(b.el, a.dx + (b.dx - a.dx) * e, a.dy + (b.dy - a.dy) * e, a.s + (b.s - a.s) * e);
+      }
+      updateSpokes();
+      if (u < 1) layoutAnim = requestAnimationFrame(tick);
+      else {
+        layoutAnim = null;
+        for (var k = 0; k < targets.length; k++) {
+          writeLayout(targets[k].el, targets[k].dx, targets[k].dy, targets[k].s);
+        }
+        updateSpokes();
+        if (onDone) onDone();
+      }
+    })(t0);
+  }
+
+  function topicScaleForK(k) {
+    if (k < 1) k = 1;
+    var s = 1.25 / k;
+    return s > 1 ? 1 : s;
+  }
+
+  function chapterTopics(ch) {
+    return Array.prototype.filter.call(svg.querySelectorAll('a.mp-tn'), function (a) {
+      return a.getAttribute('data-ch') === ch;
+    });
+  }
+
+  /* 按原方位排序后均匀铺在环或弧上；超过 10 个用双环。 */
+  function placeOnRing(center, items, vis, k) {
+    var n = items.length;
+    if (!n) return [];
+    var s = topicScaleForK(k);
+    var i, it, maxHalf = 0;
+    for (i = 0; i < n; i++) {
+      it = items[i];
+      it.s = s;
+      it.vw = it.size.w * s;
+      it.vh = it.size.h * s;
+      var half = Math.hypot(it.vw, it.vh) / 2;
+      if (half > maxHalf) maxHalf = half;
+    }
+    var inner = (items.innerR || 42) + 28 * s;
+    var minR = inner + maxHalf + 26 * s;
+    var need = maxHalf * 2 + 22 * s;
+    var ranked = items.slice().sort(function (a, b) {
+      var aa = Math.atan2(a.home.y - center.y, a.home.x - center.x);
+      var bb = Math.atan2(b.home.y - center.y, b.home.x - center.x);
+      return aa - bb;
+    });
+    var start = Math.atan2(ranked[0].home.y - center.y, ranked[0].home.x - center.x);
+    var availW = vis.w / 2 - maxHalf - 12;
+    var availH = vis.h / 2 - maxHalf - 12;
+    var maxR = Math.min(availW, availH);
+    var useTwo = n > 10;
+    var nInner = useTwo ? Math.ceil(n / 2) : n;
+    var nOuter = n - nInner;
+    var Rchord = nInner <= 1 ? minR : (need) / (2 * Math.sin(Math.PI / Math.max(nInner, 2)));
+    var R = Math.max(minR, Rchord);
+    if (maxR > minR) R = Math.max(R, Math.min(maxR * 0.74, minR * 1.3));
+    var kind = 'ring';
+    if (R > maxR + 2 && !useTwo) {
+      kind = 'arc';
+      R = Math.max(minR, maxR);
+    }
+    if (useTwo) {
+      R = Math.min(Math.max(minR, Rchord), maxR * 0.72);
+    }
+    var out = new Array(n);
+    function put(list, radius, phase, count) {
+      var step = count <= 1 ? 0 : (kind === 'arc' ? Math.min((Math.PI * 1.15), 2.4) / Math.max(1, count - 1) : (Math.PI * 2) / count);
+      var a0;
+      if (kind === 'arc' && count > 1) {
+        a0 = phase - step * (count - 1) / 2;
+      } else if (count <= 1) {
+        a0 = phase;
+      } else {
+        a0 = phase;
+      }
+      for (var j = 0; j < list.length; j++) {
+        var ang = a0 + step * j;
+        var node = list[j];
+        node.x = center.x + radius * Math.cos(ang);
+        node.y = center.y + radius * Math.sin(ang);
+        node.ang = ang;
+        node.s = s;
+        out[items.indexOf(node)] = node;
+      }
+    }
+    if (n <= 1) start = -Math.PI / 2;
+    if (useTwo) {
+      put(ranked.slice(0, nInner), R, start, nInner);
+      put(ranked.slice(nInner), R * 1.42, start + Math.PI / Math.max(nOuter, 1), nOuter);
+    } else if (kind === 'arc') {
+      /* 朝视野中空余较大的一侧张开 */
+      var room = [
+        { ang: 0, r: (vis.x + vis.w) - center.x },
+        { ang: Math.PI, r: center.x - vis.x },
+        { ang: Math.PI / 2, r: (vis.y + vis.h) - center.y },
+        { ang: -Math.PI / 2, r: center.y - vis.y }
+      ];
+      room.sort(function (a, b) { return b.r - a.r; });
+      put(ranked, R, room[0].ang, n);
+    } else {
+      put(ranked, R, start, n);
+    }
+    for (i = 0; i < out.length; i++) if (!out[i]) out[i] = items[i];
+    return out;
+  }
+
+  function visAt(k, cx, cy, bottomFrac) {
+    var V = vb();
+    var tx = V.w * 0.50 - k * cx;
+    var ty = V.h * (bottomFrac == null ? 0.40 : bottomFrac) - k * cy;
+    var pad = 16 / k;
+    var bf = (card && !card.hasAttribute('hidden')) ? 0.30 : 0.14;
+    if (bottomFrac != null) bf = 1 - bottomFrac * 2 > 0 ? 0.14 : 0.30;
+    return {
+      x: (V.x - tx) / k + pad,
+      y: (V.y - ty) / k + pad,
+      w: V.w / k - 2 * pad,
+      h: (V.h / k) * (1 - ((card && !card.hasAttribute('hidden')) ? 0.30 : 0.14)) - pad
+    };
+  }
+
+  function frameOn(cx, cy, k) {
+    var V = vb();
+    st.k = clampK(k);
+    st.tx = V.w * 0.50 - st.k * cx;
+    st.ty = V.h * 0.40 - st.k * cy;
+  }
+
+  function chooseChapterK(n) {
+    if (n <= 1) return 2.05;
+    if (n <= 3) return 1.9;
+    if (n <= 6) return 1.72;
+    if (n <= 10) return 1.52;
+    return 1.38;
+  }
+
+  function ensureSpokes() {
+    if (spokeLayer && spokeLayer.parentNode) return spokeLayer;
+    spokeLayer = document.createElementNS(NS, 'g');
+    spokeLayer.setAttribute('class', 'mp-radial-spokes');
+    spokeLayer.setAttribute('aria-hidden', 'true');
+    var hook = cam.querySelector('.mp-br');
+    if (hook && hook.parentNode === cam) cam.insertBefore(spokeLayer, hook);
+    else cam.appendChild(spokeLayer);
+    return spokeLayer;
+  }
+
+  function clearSpokes() {
+    if (!spokeLayer) return;
+    while (spokeLayer.firstChild) spokeLayer.removeChild(spokeLayer.firstChild);
+  }
+
+  function hideStarTwigs(ch, hidden) {
+    Array.prototype.forEach.call(svg.querySelectorAll('.mp-tw, .mp-tr, .mp-ic'), function (el) {
+      var ech = el.getAttribute('data-ch');
+      if (ch && ech && ech !== ch) return;
+      if (ch && !ech) return;
+      el.style.opacity = hidden ? '0' : '';
+      if (hidden) el.setAttribute('data-radial-hide', '1');
+      else el.removeAttribute('data-radial-hide');
+    });
+  }
+
+  function currentCenter(el) {
+    var h = homeCenter(el);
+    var L = layoutOf(el);
+    return { x: h.x + L.dx, y: h.y + L.dy };
+  }
+
+  function updateSpokes() {
+    if (radialMode === 'off' || !radialCh) { clearSpokes(); return; }
+    var chn = svg.querySelector('a.mp-chn[data-ch="' + radialCh + '"]');
+    if (!chn) return;
+    var c = currentCenter(chn);
+    var size = nodeBoxSize(chn);
+    var L = layoutOf(chn);
+    var hw = (size.w * L.s) / 2, hh = (size.h * L.s) / 2;
+    var g = ensureSpokes();
+    var topics = chapterTopics(radialCh);
+    if (radialMode === 'topic' && focused && focused.classList.contains('mp-tn')) {
+      topics = [focused];
+    }
+    /* rebuild if count changed */
+    var paths = g.querySelectorAll('.mp-radial-spoke');
+    if (paths.length !== topics.length) {
+      clearSpokes();
+      for (var i = 0; i < topics.length; i++) {
+        var p = document.createElementNS(NS, 'path');
+        p.setAttribute('class', 'mp-radial-spoke');
+        p.setAttribute('data-slug', topics[i].getAttribute('data-slug') || '');
+        g.appendChild(p);
+      }
+      paths = g.querySelectorAll('.mp-radial-spoke');
+    }
+    for (var j = 0; j < topics.length; j++) {
+      var tn = topics[j];
+      var tc = currentCenter(tn);
+      var ts = layoutOf(tn);
+      var tb = nodeBoxSize(tn);
+      var ang = Math.atan2(tc.y - c.y, tc.x - c.x);
+      var p0 = rayEdge(c.x, c.y, hw + 1, hh + 1, ang);
+      var back = Math.atan2(c.y - tc.y, c.x - tc.x);
+      var p1 = rayEdge(tc.x, tc.y, (tb.w * ts.s) / 2 + 1, (tb.h * ts.s) / 2 + 1, back);
+      var w0 = Math.max(0.7, 2.0 * Math.min(L.s, 1));
+      var w1 = Math.max(0.25, 0.45 * Math.min(ts.s, 1));
+      paths[j].setAttribute('d', taperPath(p0.x, p0.y, p1.x, p1.y, w0, w1));
+      paths[j].setAttribute('data-slug', tn.getAttribute('data-slug') || '');
+    }
+  }
+
+
+  function blurMapFocus() {
+    var ae = document.activeElement;
+    if (ae && svg.contains(ae) && ae.blur) ae.blur();
+  }
+
+  function applyRecede(ch, keepSlug) {
+    root.classList.add('mp-radial-on');
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (el) {
+      var recede;
+      if (el.classList.contains('mp-root')) recede = true;
+      else if (el.classList.contains('mp-chn')) recede = keepSlug ? true : el.getAttribute('data-ch') !== String(ch);
+      else if (keepSlug) recede = el.getAttribute('data-slug') !== keepSlug;
+      else recede = el.getAttribute('data-ch') !== String(ch);
+      el.classList.toggle('mp-recede', recede);
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll('.mp-br, .mp-xl, .mp-ic, .mp-tw, .mp-tr'), function (el) {
+      var recede;
+      var ech = el.getAttribute('data-ch');
+      if (ech) recede = ech !== String(ch);
+      else if (el.classList.contains('mp-br')) {
+        var m = (el.getAttribute('class') || '').match(/mp-c(\d+)/);
+        recede = !m || m[1] !== String(ch);
+      } else recede = true;
+      el.classList.toggle('mp-recede', recede);
+    });
+  }
+
+  function clearRecede() {
+    root.classList.remove('mp-radial-on');
+    Array.prototype.forEach.call(svg.querySelectorAll('.mp-recede'), function (el) {
+      el.classList.remove('mp-recede');
+    });
+  }
+
+  function targetsHome() {
+    var list = [];
+    Array.prototype.forEach.call(layoutNodes(), function (el) {
+      list.push({ el: el, dx: 0, dy: 0, s: 1 });
+    });
+    return list;
+  }
+
+  function targetsForChapter(chn, k) {
+    var ch = chn.getAttribute('data-ch');
+    var dest = mapCenter();
+    var vis = visAt(k, dest.x, dest.y);
+    var topics = chapterTopics(ch);
+    var items = [];
+    for (var i = 0; i < topics.length; i++) {
+      items.push({
+        el: topics[i],
+        home: boxCenter(topics[i]),
+        size: nodeBoxSize(topics[i])
+      });
+    }
+    var cir = chn.querySelector('.mp-nb, .mp-nr, circle');
+    items.innerR = cir && cir.getAttribute('r') ? +cir.getAttribute('r') : 42;
+    var placed = placeOnRing(dest, items, vis, k);
+    var list = [];
+    var cs = Math.min(1, 1.35 / k);
+    if (cs < 0.85) cs = 0.85;
+    var chHome = homeCenter(chn);
+    list.push({ el: chn, dx: dest.x - chHome.x, dy: dest.y - chHome.y, s: cs });
+    for (var j = 0; j < placed.length; j++) {
+      var p = placed[j];
+      var h = p.home;
+      list.push({ el: p.el, dx: p.x - h.x, dy: p.y - h.y, s: p.s });
+    }
+    Array.prototype.forEach.call(layoutNodes(), function (el) {
+      if (el === chn || el.getAttribute('data-ch') === ch) return;
+      list.push({ el: el, dx: 0, dy: 0, s: 1 });
+    });
+    return { list: list, center: dest, k: k };
+  }
+
+  function enterChapterRadial(chn, opts) {
+    if (!chn) return;
+    opts = opts || {};
+    var ch = chn.getAttribute('data-ch');
+    var n = chapterTopics(ch).length;
+    var k = chooseChapterK(n);
+    var plan = targetsForChapter(chn, k);
+    /* 若环仍超出视野，略为缩小倍率再算一次 */
+    var vis = visAt(k, plan.center.x, plan.center.y);
+    var overflow = false;
+    for (var i = 0; i < plan.list.length; i++) {
+      var t = plan.list[i];
+      if (t.el.getAttribute('data-ch') !== ch) continue;
+      var h = homeCenter(t.el);
+      var sz = nodeBoxSize(t.el);
+      var x = h.x + t.dx, y = h.y + t.dy;
+      var hw = sz.w * t.s / 2, hh = sz.h * t.s / 2;
+      if (x - hw < vis.x || x + hw > vis.x + vis.w || y - hh < vis.y || y + hh > vis.y + vis.h) overflow = true;
+    }
+    if (overflow && k > 1.25) {
+      k = Math.max(1.25, k * 0.88);
+      plan = targetsForChapter(chn, k);
+    }
+    radialMode = 'chapter';
+    root.classList.remove('mp-radial-topic');
+    blurMapFocus();
+    radialCh = ch;
+    radialViaChapter = true;
+    focused = chn;
+    setEngaged(true);
+    showCard(chn);
+    lockDim(chn);
+    markNow(chn, null);
+    applyRecede(ch);
+    hideStarTwigs(ch, true);
+    ensureSpokes();
+    frameOn(plan.center.x, plan.center.y, plan.k);
+    lodHold = true;
+    var inst = !!(opts.instant || reduced());
+    applyCam(!inst, function () { lodHold = false; });
+    animateLayouts(plan.list, { instant: inst }, function () {
+      lodHold = false;
+      updateSpokes();
+    });
+  }
+
+  function enterTopicRadial(tn, opts) {
+    if (!tn) return;
+    opts = opts || {};
+    var ch = tn.getAttribute('data-ch');
+    var via = radialMode === 'chapter' || radialViaChapter;
+    if (via && ch && radialMode !== 'topic') {
+      /* 保持章环上的专题位置，只把镜头移到该专题 */
+      radialViaChapter = true;
+      radialCh = ch;
+    } else if (!via) {
+      /* 从总览点进专题：专题大致留在原位，镜头聚焦；其它章淡出 */
+      radialViaChapter = false;
+      radialCh = ch;
+    }
+    radialMode = 'topic';
+    root.classList.add('mp-radial-topic');
+    blurMapFocus();
+    if (ch) applyRecede(ch, tn.getAttribute('data-slug'));
+    if (ch) hideStarTwigs(ch, true);
+    updateSpokes();
+  }
+
+  function resetRadial(opts) {
+    opts = opts || {};
+    var inst = !!(opts.instant || reduced());
+    var had = radialMode !== 'off';
+    radialMode = 'off';
+    radialCh = null;
+    radialViaChapter = false;
+    root.classList.remove('mp-radial-topic');
+    hideStarTwigs(null, false);
+    blurMapFocus();
+    clearRecede();
+    clearSpokes();
+    if (!had && !opts.force) return;
+    animateLayouts(targetsHome(), { instant: inst }, function () {
+      clearSpokes();
+    });
+  }
+
+  function nearestChapter(pt, maxd) {
+    var best = null, bd = maxd;
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-chn'), function (a) {
+      var c = currentCenter(a);
+      var d = Math.hypot(c.x - pt.x, c.y - pt.y);
+      if (d < bd) { bd = d; best = a; }
+    });
+    return best;
+  }
+
+
   function updateLOD() {
     if (lodHold) return;
     var kNow = (cam._cur && cam._cur.k) || st.k || 1;
+    var V = vb();
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    var tx = cam._cur ? cam._cur.tx : st.tx;
+    var ty = cam._cur ? cam._cur.ty : st.ty;
+    var mid = { x: (V.x + V.w / 2 - tx) / k, y: (V.y + V.h * 0.40 - ty) / k };
+
+    /* 章环绕态：再放大靠近专题才长出小节；缩小过阈值则退回总览 */
+    if (radialMode === 'chapter') {
+      if (kNow <= CH_OUT) {
+        goBack({ instant: reduced() });
+        return;
+      }
+      if (kNow >= CH_TOPIC_IN) {
+        var nearT = nearestTopic(mid, 280 / kNow);
+        if (nearT && kidsFor(nearT.getAttribute('data-slug')).length) {
+          var slug = nearT.getAttribute('data-slug');
+          if (shownSlug === slug && (kidsVisible || kidsPhase === 'opening' || kidsPhase === 'on')) return;
+          focused = nearT;
+          setEngaged(true);
+          showCard(nearT);
+          lockDim(nearT);
+          markNow(nearT, nearT);
+          enterTopicRadial(nearT, { instant: reduced() });
+          revealForTopic(nearT, { instant: reduced(), fit: false });
+        }
+      }
+      return;
+    }
+    if (radialMode === 'topic') {
+      var leaveK = radialViaChapter ? CH_TOPIC_OUT : LOD_OUT;
+      if (kNow <= leaveK) {
+        if (kidsPhase !== 'off' && kidsPhase !== 'closing') retractKids({ instant: reduced() });
+        if (radialViaChapter && radialCh) {
+          var chn = svg.querySelector('a.mp-chn[data-ch="' + radialCh + '"]');
+          if (chn) { enterChapterRadial(chn, { instant: reduced() }); return; }
+        }
+        resetRadial({ instant: reduced() });
+        clearFocusLight();
+        return;
+      }
+      var aT = topicForLod();
+      if (aT && kidsFor(aT.getAttribute('data-slug')).length) {
+        var slugT = aT.getAttribute('data-slug');
+        if (shownSlug === slugT && (kidsVisible || kidsPhase === 'opening' || kidsPhase === 'on')) return;
+        revealForTopic(aT, { instant: reduced(), fit: false });
+      }
+      return;
+    }
+
     if (focused && (focused.classList.contains('mp-chn') || focused.classList.contains('mp-root'))) {
       if (kNow <= LOD_OUT && kidsPhase !== 'off' && kidsPhase !== 'closing') retractKids({ instant: reduced() });
       return;
@@ -1289,7 +1942,15 @@
       if (a && kidsFor(a.getAttribute('data-slug')).length) {
         var slug = a.getAttribute('data-slug');
         if (shownSlug === slug && (kidsVisible || kidsPhase === 'opening' || kidsPhase === 'on')) return;
+        enterTopicRadial(a, { instant: reduced() });
         revealForTopic(a, { instant: reduced(), fit: false });
+        return;
+      }
+    }
+    if (kNow >= CH_IN && radialMode === 'off') {
+      var chn2 = nearestChapter(mid, 320 / kNow);
+      if (chn2) {
+        enterChapterRadial(chn2, { instant: reduced() });
         return;
       }
     } else if (kNow <= LOD_OUT) {
@@ -1327,14 +1988,14 @@
       : (a.classList.contains('mp-tn') ? a : null);
 
     if (!topic) {
+      if (a.classList.contains('mp-root')) {
+        if (kidsVisible || shownSlug) retractKids({ instant: !!opts.instant || reduced() });
+        resetRadial({ instant: !!opts.instant || reduced() });
+        restore(opts);
+        return;
+      }
       if (kidsVisible || shownSlug) retractKids({ instant: !!opts.instant || reduced() });
-      frameBox(a.getBBox(), 'chapter');
-      focused = a;
-      setEngaged(true);
-      showCard(a);
-      lockDim(a);
-      markNow(a, null);
-      applyCam(!opts.instant);
+      enterChapterRadial(a, opts);
       return;
     }
 
@@ -1368,7 +2029,13 @@
     }
 
     if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
-    frameBox(a.getBBox(), 'topic');
+    enterTopicRadial(a, opts);
+    var destT = mapCenter();
+    var bc = boxCenter(a);
+    var tk = 2.15;
+    var ts = topicScaleForK(tk);
+    animateLayouts([{ el: a, dx: destT.x - bc.x, dy: destT.y - bc.y, s: ts }], opts);
+    frameOn(destT.x, destT.y, tk);
     lodHold = true;
     applyCam(!opts.instant && !reduced(), function () {
       lodHold = false;
@@ -1379,12 +2046,13 @@
 
   function restore(opts) {
     opts = opts || {};
-    lodHold = false;
+    lodHold = true;
     var prev = focused;
     focused = null;
     retractKids({ instant: reduced() || !!opts.instant });
+    resetRadial({ instant: reduced() || !!opts.instant, force: true });
     st.k = 1; st.tx = 0; st.ty = 0;
-    applyCam(!opts.instant);
+    applyCam(!opts.instant, function () { lodHold = false; });
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
     hideCard();
     unlockDim();
@@ -1465,11 +2133,12 @@
     if (driftTick) { cancelAnimationFrame(driftTick); driftTick = null; }
   }
   function clearDriftTransforms() {
-    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn'), function (n) {
-      n.removeAttribute('transform');
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (n) {
+      applyNodeTF(n, 0, 0);
     });
   }
   function armDrift() {
+    Array.prototype.forEach.call(layoutNodes(), function (el) { ensureLayWrap(el); applyNodeTF(el, 0, 0); });
     stopDrift();
     if (reduced()) {
       root.classList.remove('mp-live');
@@ -1497,13 +2166,17 @@
       var t = now / 1000;
       for (var i = 0; i < driftItems.length; i++) {
         var it = driftItems[i];
+        if (layoutAnim) {
+          applyNodeTF(it.el, 0, 0);
+          continue;
+        }
         if (it.el.classList.contains('mp-now')) {
-          it.el.setAttribute('transform', 'translate(0 0)');
+          applyNodeTF(it.el, 0, 0);
           continue;
         }
         var dx = it.ax * Math.sin((t * Math.PI * 2) / it.p1 + it.ph);
         var dy = it.ay * Math.sin((t * Math.PI * 2) / it.p2 + it.ph * 1.15);
-        it.el.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')');
+        applyNodeTF(it.el, dx, dy);
       }
       driftTick = requestAnimationFrame(tick);
     })(performance.now());
@@ -1525,6 +2198,15 @@
     if (focused && focused.classList.contains('mp-sub')) {
       var par = svg.querySelector('a.mp-tn[data-slug="' + focused.getAttribute('data-slug') + '"]');
       if (par) { focusNode(par, opts); if (opts.returnFocus && par.focus) { try { par.focus({ preventScroll: true }); } catch (e) { par.focus(); } } return; }
+    }
+    if (radialMode === 'topic' && radialViaChapter && radialCh) {
+      var chnB = svg.querySelector('a.mp-chn[data-ch="' + radialCh + '"]');
+      retractKids({ instant: reduced() || !!opts.instant });
+      if (chnB) {
+        enterChapterRadial(chnB, opts);
+        if (opts.returnFocus && chnB.focus) { try { chnB.focus({ preventScroll: true }); } catch (e) { chnB.focus(); } }
+        return;
+      }
     }
     restore(opts);
   }
