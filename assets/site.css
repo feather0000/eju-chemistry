@@ -731,13 +731,10 @@ body.contents {
 #map .mp-cam { transform-origin: 0 0; transform-box: view-box; }
 #map .mp-d { transition: opacity 140ms linear; }
 
-/* 漂浮：由 map.js 给每个节点写入 --mp-t / --mp-dx / --mp-dy */
-#map.mp-live a.mp-tn, #map.mp-live a.mp-chn {
-  animation: mp-drift var(--mp-t, 14s) ease-in-out infinite alternate;
-}
-@keyframes mp-drift {
-  from { transform: translate(0, 0); }
-  to { transform: translate(var(--mp-dx, 2px), var(--mp-dy, -2px)); }
+/* 漂浮由 map.js 里的 d3-force 写在节点的 SVG transform 上（不用 CSS transform：默认 transform-box 是 view-box，原点在画布角，2px 几乎看不出）。 */
+#map a.mp-tn, #map a.mp-chn {
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 /* 星点与轨道上的装饰点轻微闪烁 */

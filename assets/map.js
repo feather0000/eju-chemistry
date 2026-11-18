@@ -5,14 +5,17 @@
    - 空白处、说明卡「返回」、Esc：还原
    - 滚轮：默认需按住 Ctrl 或 ⌘（避免抢走页面滚动）；点进图中（.mp-engaged）后可直接滚动缩放、拖动平移
    - 触屏：未点进图中时单指仍滚动页面；双指缩放；点进图中后可单指拖动。双指也会进入已启用状态
-   - 节点轻微漂浮、星点闪烁、联系弧虚线缓缓流动；prefers-reduced-motion 时全部取消，缩放瞬间到位
-   - 专题小节只在放大聚焦（或自由缩放到约 2 倍）后从该专题长出，总览图不画这些分支 */
+   - 镜头（缩放、平移、惯性）由 d3-zoom 驱动，过渡用 d3-transition / d3-ease 缓动，滚轮有追逐插值，拖动松手有惯性
+   - 节点漂动由 d3-force 在原作者坐标附近做弱力模拟；小节扇形布局用 d3-hierarchy 的 cluster
+   - 星点闪烁、联系弧虚线流动仍用 CSS；prefers-reduced-motion 时全部取消，缩放与展开瞬间到位
+   - 专题小节只在放大聚焦或自由缩放到阈值以上后从该专题长出，总览图不画这些分支；缩回总览时平滑收回（带滞回） */
 (function () {
   'use strict';
   var root = document.querySelector('#map');
   if (!root) return;
   var svg = root.querySelector('.mp-svg');
   if (!svg) return;
+  if (!window.d3 || typeof d3.zoom !== 'function') return;
   var figure = root.querySelector('figure.mp') || root;
   var scroll = root.querySelector('.mp-scroll') || svg.parentNode;
   var NS = 'http://www.w3.org/2000/svg';
@@ -81,37 +84,107 @@
   var engaged = false;
   var panning = false;
   var moved = false;
-  var pid = null, lastP = null;
-  var pointers = {};
-  var pinch0 = null;
+  var lodHold = false;
+  var camTick = null;
+  var inertiaV = { vx: 0, vy: 0 };
+  var dragTrace = [];
+  var zoomer = null;
+  var zsel = null;
 
   function reduced() { return !!(RM && RM.matches); }
 
-  var camAnim = null;
   cam._cur = { k: 1, tx: 0, ty: 0 };
   function setCam(k, tx, ty) {
     cam.setAttribute('transform', 'translate(' + tx + ' ' + ty + ') scale(' + k + ')');
     cam._cur = { k: k, tx: tx, ty: ty };
   }
-  function easeInOut(u) { return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; }
-  function applyCam(animate, onDone) {
-    if (camAnim) { cancelAnimationFrame(camAnim); camAnim = null; }
-    var to = { k: st.k, tx: st.tx, ty: st.ty };
-    function finish() {
-      setCam(to.k, to.tx, to.ty);
-      updateLOD();
+  setCam(1, 0, 0);
+  function nearly(a, b, eps) { return Math.abs(a - b) <= (eps || 0.0008); }
+  function zoomT(k, tx, ty) { return d3.zoomIdentity.translate(tx, ty).scale(k); }
+  function stopCamTick() {
+    if (camTick) { cancelAnimationFrame(camTick); camTick = null; }
+    inertiaV.vx = 0;
+    inertiaV.vy = 0;
+    if (zsel) zsel.interrupt();
+  }
+  function applyZoom(t, animate, onDone) {
+    if (!zoomer || !zsel) {
+      setCam(t.k, t.x, t.y);
+      if (!lodHold) updateLOD();
       if (onDone) onDone();
+      return;
     }
-    if (!animate || reduced()) { finish(); return; }
-    var from = cam._cur || { k: 1, tx: 0, ty: 0 };
-    var t0 = performance.now(), dur = 500;
-    (function tick(now) {
-      var u = Math.min(1, (now - t0) / dur);
-      var e = easeInOut(u);
-      setCam(from.k + (to.k - from.k) * e, from.tx + (to.tx - from.tx) * e, from.ty + (to.ty - from.ty) * e);
-      if (u < 1) camAnim = requestAnimationFrame(tick);
-      else { camAnim = null; finish(); }
-    })(t0);
+    zsel.interrupt();
+    if (!animate || reduced()) {
+      zsel.call(zoomer.transform, t);
+      if (onDone) onDone();
+      return;
+    }
+    zsel.transition('mp-cam')
+      .duration(520)
+      .ease(d3.easeCubicInOut)
+      .call(zoomer.transform, t)
+      .on('end.mp', function () { if (onDone) onDone(); });
+  }
+  function applyCam(animate, onDone) {
+    stopCamTick();
+    applyZoom(zoomT(st.k, st.tx, st.ty), animate, onDone);
+  }
+  function chaseCam() {
+    if (reduced() || !zoomer) { applyCam(false); return; }
+    zsel.interrupt();
+    inertiaV.vx = 0;
+    inertiaV.vy = 0;
+    if (camTick) return;
+    (function tick() {
+      var cur = d3.zoomTransform(svg);
+      var a = 0.2;
+      var nk = cur.k + (st.k - cur.k) * a;
+      var ntx = cur.x + (st.tx - cur.x) * a;
+      var nty = cur.y + (st.ty - cur.y) * a;
+      if (nearly(nk, st.k) && nearly(ntx, st.tx, 0.12) && nearly(nty, st.ty, 0.12)) {
+        zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
+        camTick = null;
+        return;
+      }
+      zsel.call(zoomer.transform, zoomT(nk, ntx, nty));
+      camTick = requestAnimationFrame(tick);
+    })();
+  }
+  function startInertia() {
+    if (reduced() || !zoomer || dragTrace.length < 2) { dragTrace = []; return; }
+    var b = dragTrace[dragTrace.length - 1];
+    var a = b;
+    for (var i = dragTrace.length - 2; i >= 0; i--) {
+      if (b.t - dragTrace[i].t > 90) break;
+      a = dragTrace[i];
+    }
+    dragTrace = [];
+    var dt = b.t - a.t;
+    if (dt < 20) return;
+    var vx = (b.tx - a.tx) / dt * 16.7;
+    var vy = (b.ty - a.ty) / dt * 16.7;
+    var sp = Math.hypot(vx, vy);
+    if (sp < 1.2) return;
+    var cap = 52;
+    if (sp > cap) { vx *= cap / sp; vy *= cap / sp; }
+    inertiaV = { vx: vx, vy: vy };
+    if (camTick) return;
+    (function tick() {
+      st.tx += inertiaV.vx;
+      st.ty += inertiaV.vy;
+      inertiaV.vx *= 0.92;
+      inertiaV.vy *= 0.92;
+      if (Math.hypot(inertiaV.vx, inertiaV.vy) < 0.18) {
+        inertiaV.vx = 0;
+        inertiaV.vy = 0;
+        zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
+        camTick = null;
+        return;
+      }
+      zsel.call(zoomer.transform, zoomT(st.k, st.tx, st.ty));
+      camTick = requestAnimationFrame(tick);
+    })();
   }
 
   function vb() {
@@ -122,8 +195,10 @@
 
   function visibleUserRect() {
     var V = vb();
-    var k = st.k || 1;
-    return { x: (V.x - st.tx) / k, y: (V.y - st.ty) / k, w: V.w / k, h: V.h / k };
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    var tx = cam._cur ? cam._cur.tx : st.tx;
+    var ty = cam._cur ? cam._cur.ty : st.ty;
+    return { x: (V.x - tx) / k, y: (V.y - ty) / k, w: V.w / k, h: V.h / k };
   }
 
   function clientToView(cx, cy) {
@@ -138,14 +213,14 @@
 
   function zoomAt(cx, cy, factor) {
     var p = clientToView(cx, cy);
-    var k2 = clampK(st.k * factor);
-    if (k2 === st.k) return;
-    st.tx = p.x - (p.x - st.tx) * (k2 / st.k);
-    st.ty = p.y - (p.y - st.ty) * (k2 / st.k);
+    var kFrom = st.k;
+    var k2 = clampK(kFrom * factor);
+    if (k2 === kFrom) return;
+    st.tx = p.x - (p.x - st.tx) * (k2 / kFrom);
+    st.ty = p.y - (p.y - st.ty) * (k2 / kFrom);
     st.k = k2;
-    applyCam(false);
+    chaseCam();
     if (st.k > 1.02) setEngaged(true);
-    updateLOD();
   }
 
   function setEngaged(on) {
@@ -163,6 +238,63 @@
     if (a.classList.contains('mp-tn') || a.classList.contains('mp-chn') || a.classList.contains('mp-sub')) return a;
     return null;
   }
+
+  function bindZoom() {
+    zsel = d3.select(svg);
+    zoomer = d3.zoom()
+      .scaleExtent([KMIN, KMAX])
+      .clickDistance(5)
+      .filter(function (event) {
+        if (event.type === 'wheel') return false;
+        if (event.button && event.button !== 0) return false;
+        if (event.type === 'mousedown') {
+          if (nodeAnchor(event.target)) return false;
+          return engaged || st.k > 1.02;
+        }
+        if (event.type === 'touchstart') {
+          var n = (event.touches && event.touches.length) || 0;
+          if (n >= 2) { setEngaged(true); return true; }
+          if (nodeAnchor(event.target)) return false;
+          return engaged || st.k > 1.02;
+        }
+        return !event.ctrlKey;
+      })
+      .on('start', function (event) {
+        if (event.sourceEvent) {
+          lodHold = false;
+          stopCamTick();
+          dragTrace = [{ t: performance.now(), tx: event.transform.x, ty: event.transform.y }];
+          panning = true;
+          moved = false;
+        }
+      })
+      .on('zoom', function (event) {
+        var t = event.transform;
+        setCam(t.k, t.x, t.y);
+        if (event.sourceEvent) {
+          st.k = t.k;
+          st.tx = t.x;
+          st.ty = t.y;
+          dragTrace.push({ t: performance.now(), tx: t.x, ty: t.y });
+          if (dragTrace.length > 8) dragTrace.shift();
+          if (Math.hypot(t.x - dragTrace[0].tx, t.y - dragTrace[0].ty) > 4 || Math.abs(t.k - 1) > 0.02) moved = true;
+          var typ = event.sourceEvent.type || '';
+          if (typ.indexOf('touch') === 0 || typ === 'wheel' || t.k > 1.02) {
+            if (typ.indexOf('touch') === 0 && ((event.sourceEvent.touches && event.sourceEvent.touches.length >= 2) || typ === 'touchmove')) setEngaged(true);
+          }
+        }
+        if (!lodHold) updateLOD();
+      })
+      .on('end', function (event) {
+        if (event.sourceEvent && panning && moved) startInertia();
+        else dragTrace = [];
+        panning = false;
+        setTimeout(function () { if (!panning) moved = false; }, 0);
+      });
+    zsel.call(zoomer).on('dblclick.zoom', null);
+    zsel.call(zoomer.transform, zoomT(1, 0, 0));
+  }
+  bindZoom();
 
   function infoFor(a) {
     if (!a) return null;
@@ -236,8 +368,10 @@
 
 
   /* ---------- 第三层小节（专题聚焦或放大越过阈值时出现） ---------- */
-  var LOD_K = 2;
+  var LOD_IN = 1.75;
+  var LOD_OUT = 1.35;
   var kidsVisible = false;
+  var kidsPhase = 'off';
   var kidAnim = null;
 
   function cancelKidAnim() {
@@ -280,9 +414,12 @@
     root.classList.add('mp-kids-on');
     root.classList.remove('mp-kids-grown');
     g.setAttribute('aria-hidden', 'false');
+    if (kidsPhase === 'opening' && !opts.instant) return;
+    kidsPhase = 'opening';
     if (reduced() || opts.instant) {
       setKidsProgress(g, 1);
       kidsVisible = true;
+      kidsPhase = 'on';
       root.classList.add('mp-kids-grown');
       if (opts.onDone) opts.onDone();
       return;
@@ -296,6 +433,7 @@
         kidAnim = null;
         setKidsProgress(g, 1);
         kidsVisible = true;
+        kidsPhase = 'on';
         root.classList.add('mp-kids-grown');
         if (opts.onDone) opts.onDone();
       }
@@ -310,15 +448,18 @@
       if (g && g.parentNode) g.parentNode.removeChild(g);
       shownSlug = null;
       kidsVisible = false;
+      kidsPhase = 'off';
       root.classList.remove('mp-kids-on');
       root.classList.remove('mp-kids-grown');
       if (opts.onDone) opts.onDone();
     }
     if (!g) { finish(); return; }
+    if (kidsPhase === 'closing' && !opts.instant) return;
     cancelKidAnim();
+    kidsPhase = 'closing';
     g.setAttribute('aria-hidden', 'true');
     if (reduced() || opts.instant) { setKidsProgress(g, 0); finish(); return; }
-    var t0 = performance.now(), dur = 280;
+    var t0 = performance.now(), dur = 400;
     (function tick(now) {
       var u = Math.min(1, (now - t0) / dur);
       setKidsProgress(g, 1 - u);
@@ -343,7 +484,10 @@
   }
   function viewCenterUser() {
     var V = vb();
-    return { x: (V.x + V.w / 2 - st.tx) / st.k, y: (V.y + V.h / 2 - st.ty) / st.k };
+    var k = (cam._cur && cam._cur.k) || st.k;
+    var tx = cam._cur ? cam._cur.tx : st.tx;
+    var ty = cam._cur ? cam._cur.ty : st.ty;
+    return { x: (V.x + V.w / 2 - tx) / k, y: (V.y + V.h / 2 - ty) / k };
   }
   function tw(s, fs) {
     s = (s || '') + '';
@@ -425,50 +569,47 @@
     }
     var clear = Math.max(pb.width, pb.height) / 2 + 22;
     var rOff = clear + 36;
-    function anglesFor(idxs, h, r, boxsrc) {
-      var n = idxs.length, angs = [];
-      if (n === 1) return [h];
-      var need = 0, sum = 0;
-      for (var i = 0; i < n; i++) { need += boxsrc[idxs[i]].w + 12; sum += boxsrc[idxs[i]].w; }
-      var sp = Math.min(need / Math.max(r, 1), 2.7);
-      var acc = 0;
-      for (var k = 0; k < n; k++) {
-        acc += boxsrc[idxs[k]].w / 2;
-        angs.push(h - sp / 2 + sp * (acc / sum));
-        acc += boxsrc[idxs[k]].w / 2;
-      }
-      return angs;
-    }
     function layout(h, r) {
-      var n = kids.length, idxs = [];
-      for (var i = 0; i < n; i++) idxs.push(i);
-      var angs = anglesFor(idxs, h, r, boxes);
-      var pts = [];
-      for (var i2 = 0; i2 < n; i2++) {
-        pts.push({
-          x: c.x + r * Math.cos(angs[i2]),
-          y: c.y + r * Math.sin(angs[i2]),
-          a: angs[i2], w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
-        });
-      }
+      var n = kids.length;
+      var tree = d3.hierarchy({ children: kids.map(function (_, i) { return { i: i }; }) });
+      var need = 0;
+      for (var i = 0; i < n; i++) need += boxes[i].w + 12;
+      var span = n <= 1 ? 0.001 : Math.min(2.7, need / Math.max(r, 1));
+      d3.cluster().size([span, r])(tree);
+      var pts = new Array(n);
+      tree.leaves().forEach(function (d) {
+        var i2 = d.data.i;
+        var ang = n === 1 ? h : (h - span / 2 + d.x);
+        pts[i2] = {
+          x: c.x + d.y * Math.cos(ang),
+          y: c.y + d.y * Math.sin(ang),
+          a: ang, w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
+        };
+      });
       return { pts: pts };
     }
     function layout2(h, r, gap) {
       var n = kids.length, n0 = Math.ceil(n / 2);
-      var row0 = [], row1 = [];
-      for (var i = 0; i < n; i++) (i < n0 ? row0 : row1).push(i);
       var pts = new Array(n);
       function put(idxs, rr) {
-        var angs = anglesFor(idxs, h, rr, boxes);
-        for (var j = 0; j < idxs.length; j++) {
-          var i2 = idxs[j];
+        if (!idxs.length) return;
+        var tree = d3.hierarchy({ children: idxs.map(function (i) { return { i: i }; }) });
+        var need = 0;
+        for (var j = 0; j < idxs.length; j++) need += boxes[idxs[j]].w + 12;
+        var span = idxs.length <= 1 ? 0.001 : Math.min(2.7, need / Math.max(rr, 1));
+        d3.cluster().size([span, rr])(tree);
+        tree.leaves().forEach(function (d) {
+          var i2 = d.data.i;
+          var ang = idxs.length === 1 ? h : (h - span / 2 + d.x);
           pts[i2] = {
-            x: c.x + rr * Math.cos(angs[j]),
-            y: c.y + rr * Math.sin(angs[j]),
-            a: angs[j], w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
+            x: c.x + d.y * Math.cos(ang),
+            y: c.y + d.y * Math.sin(ang),
+            a: ang, w: boxes[i2].w, h: boxes[i2].h, f: boxes[i2].f
           };
-        }
+        });
       }
+      var row0 = [], row1 = [];
+      for (var i = 0; i < n; i++) (i < n0 ? row0 : row1).push(i);
       put(row0, r);
       put(row1, r + (gap || 56));
       return { pts: pts };
@@ -717,11 +858,8 @@
     if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
     if (shownSlug !== slug || !cam.querySelector('.mp-subs')) placeKids(a);
     function startGrow() { growKids({ instant: opts.instant, onDone: opts.onDone }); }
-    if (fitUnion(a) && !reduced() && !opts.instant) applyCam(true, startGrow);
-    else {
-      if (st.k !== (cam._cur && cam._cur.k)) applyCam(false);
-      startGrow();
-    }
+    if (opts.fit !== false && fitUnion(a) && !reduced() && !opts.instant) applyCam(true, startGrow);
+    else startGrow();
   }
 
   window.__ejuMap = {
@@ -730,9 +868,11 @@
       var g = cam.querySelector('.mp-subs');
       if (!g) return;
       setKidsProgress(g, t);
-      if (t >= 1) { kidsVisible = true; root.classList.add('mp-kids-grown'); g.setAttribute('aria-hidden', 'false'); }
-      if (t <= 0) { kidsVisible = false; root.classList.remove('mp-kids-grown'); }
-    }
+      if (t >= 1) { kidsVisible = true; kidsPhase = 'on'; root.classList.add('mp-kids-grown'); g.setAttribute('aria-hidden', 'false'); }
+      if (t <= 0) { kidsVisible = false; kidsPhase = 'off'; root.classList.remove('mp-kids-grown'); }
+    },
+    cam: function () { return { k: cam._cur.k, tx: cam._cur.tx, ty: cam._cur.ty, tk: st.k, ttx: st.tx, tty: st.ty }; },
+    motion: function () { return root.getAttribute('data-motion'); }
   };
 
   function nearestTopic(pt, maxd) {
@@ -745,17 +885,41 @@
     return best;
   }
 
+  function clearFocusLight() {
+    if (!focused) return;
+    if (!(focused.classList.contains('mp-tn') || focused.classList.contains('mp-sub'))) return;
+    focused = null;
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-now'), function (n) { n.classList.remove('mp-now'); });
+    hideCard();
+    unlockDim();
+  }
+  function topicForLod() {
+    if (focused && focused.classList.contains('mp-sub')) {
+      return svg.querySelector('a.mp-tn[data-slug="' + focused.getAttribute('data-slug') + '"]');
+    }
+    if (focused && focused.classList.contains('mp-tn')) return focused;
+    return nearestTopic(viewCenterUser(), 260);
+  }
   function updateLOD() {
-    if (focused && (focused.classList.contains('mp-tn') || focused.classList.contains('mp-sub'))) return;
-    if (st.k >= LOD_K) {
-      var a = nearestTopic(viewCenterUser(), 160);
+    if (lodHold) return;
+    var kNow = (cam._cur && cam._cur.k) || st.k || 1;
+    if (focused && (focused.classList.contains('mp-chn') || focused.classList.contains('mp-root'))) {
+      if (kNow <= LOD_OUT && kidsPhase !== 'off' && kidsPhase !== 'closing') retractKids({ instant: reduced() });
+      return;
+    }
+    if (kNow >= LOD_IN) {
+      var a = topicForLod();
       if (a && kidsFor(a.getAttribute('data-slug')).length) {
-        if (shownSlug === a.getAttribute('data-slug') && kidsVisible) return;
-        revealForTopic(a);
+        var slug = a.getAttribute('data-slug');
+        if (shownSlug === slug && (kidsVisible || kidsPhase === 'opening' || kidsPhase === 'on')) return;
+        revealForTopic(a, { instant: reduced(), fit: false });
         return;
       }
+    } else if (kNow <= LOD_OUT) {
+      if (kidsPhase !== 'off' && kidsPhase !== 'closing') retractKids({ instant: reduced() });
+      else if (kidsPhase === 'off' && (kidsVisible || shownSlug)) retractKids({ instant: reduced() });
+      clearFocusLight();
     }
-    if (kidsVisible || shownSlug) retractKids({ instant: reduced() });
   }
 
   function frameBox(box, kind) {
@@ -828,7 +992,9 @@
 
     if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
     frameBox(a.getBBox(), 'topic');
+    lodHold = true;
     applyCam(!opts.instant && !reduced(), function () {
+      lodHold = false;
       if (focused !== a) return;
       revealForTopic(a, { instant: reduced() || opts.instant });
     });
@@ -836,6 +1002,7 @@
 
   function restore(opts) {
     opts = opts || {};
+    lodHold = false;
     var prev = focused;
     focused = null;
     retractKids({ instant: reduced() || !!opts.instant });
@@ -914,26 +1081,75 @@
   }
   placeStars();
 
-  /* 漂浮：各节点不同周期与方向，幅度约 2–3px */
+  /* 漂浮：d3-force 把节点轻轻推离作者坐标，再用 forceX/Y 拉回，位移限制在约 9 用户单位。 */
+  var driftSim = null;
+  var driftNodes = [];
+  function clearDriftTransforms() {
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn'), function (n) {
+      n.removeAttribute('transform');
+    });
+  }
+  function stopDrift() {
+    if (driftSim) { driftSim.stop(); driftSim = null; }
+  }
   function armDrift() {
-    if (reduced()) { root.classList.remove('mp-live'); return; }
-    var nodes = svg.querySelectorAll('a.mp-tn, a.mp-chn');
-    Array.prototype.forEach.call(nodes, function (n, i) {
-      var t = 11 + (i * 1.37) % 9;
-      var a = 2 + (i % 3) * 0.4;
-      var dx = (i % 2 ? a : -a).toFixed(1) + 'px';
-      var dy = ((i % 3 === 0 ? a : i % 3 === 1 ? -a : a * 0.6)).toFixed(1) + 'px';
-      n.style.setProperty('--mp-t', t.toFixed(2) + 's');
-      n.style.setProperty('--mp-dx', dx);
-      n.style.setProperty('--mp-dy', dy);
-      n.style.setProperty('--mp-t2', (t * 1.15).toFixed(2) + 's');
+    stopDrift();
+    if (reduced()) {
+      root.classList.remove('mp-live');
+      root.setAttribute('data-motion', 'reduced');
+      clearDriftTransforms();
+      return;
+    }
+    driftNodes = [];
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn'), function (n, i) {
+      var c = topicCenter(n);
+      driftNodes.push({
+        el: n,
+        x: c.x, y: c.y,
+        x0: c.x, y0: c.y,
+        vx: (i % 2 ? 1 : -1) * 0.35,
+        vy: (i % 3 === 0 ? 1 : -1) * 0.28
+      });
+      var ang = i * 1.17, rad = 5.5 + (i % 3) * 1.2;
+      driftNodes[driftNodes.length - 1].x = c.x + rad * Math.cos(ang);
+      driftNodes[driftNodes.length - 1].y = c.y + rad * Math.sin(ang);
     });
     root.classList.add('mp-live');
+    root.setAttribute('data-motion', 'live');
+    function brownian() {
+      for (var i = 0; i < driftNodes.length; i++) {
+        var d = driftNodes[i];
+        d.vx += (Math.random() - 0.5) * 0.55;
+        d.vy += (Math.random() - 0.5) * 0.55;
+      }
+    }
+    driftSim = d3.forceSimulation(driftNodes)
+      .force('x', d3.forceX(function (d) { return d.x0; }).strength(0.045))
+      .force('y', d3.forceY(function (d) { return d.y0; }).strength(0.045))
+      .force('brownian', brownian)
+      .velocityDecay(0.18)
+      .alpha(0.2)
+      .alphaDecay(0)
+      .alphaTarget(0.14)
+      .on('tick', function () {
+        for (var i = 0; i < driftNodes.length; i++) {
+          var d = driftNodes[i];
+          var dx = d.x - d.x0, dy = d.y - d.y0;
+          var m = Math.hypot(dx, dy), cap = 9;
+          if (m > cap) { dx = dx * cap / m; dy = dy * cap / m; d.x = d.x0 + dx; d.y = d.y0 + dy; }
+          if (d.el.classList.contains('mp-now')) d.el.setAttribute('transform', 'translate(0 0)');
+          else d.el.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')');
+        }
+      });
   }
   armDrift();
   if (RM && RM.addEventListener) RM.addEventListener('change', function () {
     if (reduced()) {
       root.classList.remove('mp-live');
+      root.setAttribute('data-motion', 'reduced');
+      stopDrift();
+      clearDriftTransforms();
+      stopCamTick();
       applyCam(false);
     } else armDrift();
   });
@@ -1004,6 +1220,15 @@
       } else {
         focusNode(a);
       }
+      return;
+    }
+    var inMap = engaged || (document.activeElement && root.contains(document.activeElement));
+    if (!inMap) return;
+    if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      setEngaged(true);
+      var r = svg.getBoundingClientRect();
+      zoomAt(r.left + r.width / 2, r.top + r.height / 2, e.key === '-' || e.key === '_' ? 1 / 1.18 : 1.18);
     }
   });
 
@@ -1027,76 +1252,7 @@
     if (!svg.contains(e.relatedTarget)) show(null);
   });
 
-  /* 拖动平移：已启用，或已经缩放过 */
-  function canPan() { return engaged || st.k > 1.02; }
-
-  scroll.addEventListener('pointerdown', function (e) {
-    if (e.button !== 0 && e.pointerType !== 'touch') return;
-    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-    var n = Object.keys(pointers).length;
-    if (n === 2) {
-      var ids = Object.keys(pointers);
-      var a = pointers[ids[0]], b = pointers[ids[1]];
-      pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), k: st.k, tx: st.tx, ty: st.ty };
-      setEngaged(true);
-      panning = false;
-      try { scroll.setPointerCapture(e.pointerId); } catch (err) {}
-      return;
-    }
-    if (nodeAnchor(e.target)) { lastP = { x: e.clientX, y: e.clientY }; moved = false; return; }
-    if (!canPan()) { lastP = { x: e.clientX, y: e.clientY }; moved = false; return; }
-    panning = true; moved = false; pid = e.pointerId;
-    lastP = { x: e.clientX, y: e.clientY };
-    try { scroll.setPointerCapture(e.pointerId); } catch (err) {}
-    e.preventDefault();
-  });
-
-  scroll.addEventListener('pointermove', function (e) {
-    if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-    var ids = Object.keys(pointers);
-    if (ids.length >= 2 && pinch0) {
-      var a = pointers[ids[0]], b = pointers[ids[1]];
-      var d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinch0.d > 8 && d > 0) {
-        var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        var factor = d / pinch0.d;
-        /* 以双指中点为基准，从捏合开始时的倍率算 */
-        var p = clientToView(mx, my);
-        var k2 = clampK(pinch0.k * factor);
-        st.tx = p.x - (p.x - pinch0.tx) * (k2 / pinch0.k);
-        st.ty = p.y - (p.y - pinch0.ty) * (k2 / pinch0.k);
-        st.k = k2;
-        applyCam(false);
-        if (st.k > 1.02) setEngaged(true);
-        updateLOD();
-      }
-      e.preventDefault();
-      return;
-    }
-    if (!panning || e.pointerId !== pid || !lastP) return;
-    var dx = e.clientX - lastP.x, dy = e.clientY - lastP.y;
-    if (Math.hypot(dx, dy) > 4) moved = true;
-    if (!moved) return;
-    var V = vb();
-    var rect = svg.getBoundingClientRect();
-    var sx = V.w / (rect.width || 1), sy = V.h / (rect.height || 1);
-    st.tx += dx * sx;
-    st.ty += dy * sy;
-    lastP = { x: e.clientX, y: e.clientY };
-    applyCam(false);
-    e.preventDefault();
-  });
-
-  function endPointer(e) {
-    delete pointers[e.pointerId];
-    if (Object.keys(pointers).length < 2) pinch0 = null;
-    if (e.pointerId === pid) { panning = false; pid = null; }
-    /* click 处理器会读 moved；稍后再清，避免 click 先于 pointerup 丢失 */
-    setTimeout(function () { if (!panning) moved = false; }, 0);
-  }
-  scroll.addEventListener('pointerup', endPointer);
-  scroll.addEventListener('pointercancel', endPointer);
-
+  /* 平移、双指缩放由 d3-zoom 处理；滚轮走追逐插值，避免逐步跳变。 */
   scroll.addEventListener('wheel', function (e) {
     var allow = engaged || e.ctrlKey || e.metaKey;
     if (!allow) return;
