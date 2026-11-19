@@ -565,6 +565,13 @@
     var bottomFrac = 0.12;
     return { x: vis.x + p, y: vis.y + p, w: vis.w - 2 * p, h: vis.h * (1 - bottomFrac) - p };
   }
+  /* 图版内框约 21 用户单位，再留一点空隙 */
+  function innerUserRect() {
+    var vis = visibleUserRect();
+    var k = (cam._cur && cam._cur.k) || st.k || 1;
+    var p = 28 / k;
+    return { x: vis.x + p, y: vis.y + p, w: vis.w - 2 * p, h: vis.h - 2 * p };
+  }
 
   function elemUserRect(el) {
     if (!el) return null;
@@ -626,7 +633,7 @@
     return lines.length ? lines : [zh];
   }
 
-  function labelSizes(kids) {
+  function labelSizes(kids, parentBox) {
     function fitText(str, size, maxW) {
       str = (str || '') + '';
       if (!str) return '';
@@ -639,11 +646,15 @@
     var sc = kidScale();
     var vis = visibleLayoutRect();
     var avail = vis && sc ? vis.w / sc : 280;
-    /* 窄屏上把框宽限制在大约半列，好排两列或换行 */
     var many = kids.length >= 5;
     var frac = (avail < 520) ? (many ? 0.30 : 0.42) : 0.46;
     var MAXW = Math.min(280, Math.max(many && avail < 520 ? 100 : 128, avail * frac));
-    var minW = Math.min(124, Math.max(avail < 520 ? 96 : 108, MAXW * 0.78));
+    /* 窄屏十字排布时，左右臂宽度要能放得下 */
+    if (avail < 520 && parentBox && parentBox.width && sc) {
+      var side = (vis.w - parentBox.width) / 2 / sc - 16;
+      if (side > 88) MAXW = Math.min(MAXW, side);
+    }
+    var minW = Math.min(124, Math.max(avail < 520 ? 92 : 108, Math.min(MAXW, MAXW * 0.78)));
     return kids.map(function (k) {
       var lines = wrapToLines(k.zh, MAXW - 22, TITLE_FS, 2);
       var f = fitText(k.f, FORM_FS, MAXW - 22);
@@ -652,7 +663,7 @@
       if (f) twid = Math.max(twid, tw(f, FORM_FS));
       var w = Math.min(Math.max(twid + 22, minW), MAXW);
       var h = avail < 520
-        ? (16 + lines.length * 18 + (f ? 16 : 2))
+        ? (12 + lines.length * 17 + (f ? 14 : 2))
         : (22 + lines.length * 19 + (f ? 20 : 4));
       return { f: f, w: w, h: h, lines: lines };
     });
@@ -675,9 +686,9 @@
     if (!kids.length) return null;
     var geom = parentGeom(parent);
     var pb = geom.pb, c = geom.c;
-    var boxes = labelSizes(kids);
     var s = kidScale();
     var vis = visibleLayoutRect();
+    var boxes = labelSizes(kids, pb);
     var gap = 14 * s;
     var stem = Math.max(24 * s, 14 * s);
     var items = boxes.map(function (b) {
@@ -988,9 +999,174 @@
       return finish(pts);
     }
 
-    var chosen = radialViaChapter ? null : packKidRadial();
-    var tried;
+    function packCross() {
+      var n = items.length;
+      if (!n) return null;
+      var loose = innerUserRect();
+      var gap2, stem2;
+
+      function stackH(idxs) {
+        var h = 0, i;
+        for (i = 0; i < idxs.length; i++) h += items[idxs[i]].vh + (i ? gap2 : 0);
+        return h;
+      }
+      function countsList() {
+        var out = [], seen = {};
+        function add(T, B, L, R) {
+          if (T + B + L + R !== n) return;
+          if (T < 0 || B < 0 || L < 0 || R < 0) return;
+          var key = T + ',' + B + ',' + L + ',' + R;
+          if (seen[key]) return;
+          seen[key] = 1;
+          out.push({ T: T, B: B, L: L, R: R });
+        }
+        if (n === 1) {
+          add(0, 1, 0, 0); add(1, 0, 0, 0); add(0, 0, 0, 1); add(0, 0, 1, 0);
+        } else if (n === 2) {
+          add(1, 1, 0, 0); add(0, 0, 1, 1); add(1, 0, 0, 1); add(1, 0, 1, 0);
+        } else if (n === 3) {
+          add(1, 0, 1, 1); add(0, 1, 1, 1); add(1, 1, 0, 1); add(1, 1, 1, 0);
+        } else {
+          var rest, t, b, l;
+          for (t = 0; t <= n; t++) for (b = 0; b <= n - t; b++) {
+            rest = n - t - b;
+            for (l = 0; l <= rest; l++) add(t, b, l, rest - l);
+          }
+          out.sort(function (A, B) {
+            function used(c) { return (c.T > 0) + (c.B > 0) + (c.L > 0) + (c.R > 0); }
+            function vHeavy(c) { return c.T + c.B - (c.L + c.R); }
+            function balancedSides(c) { return Math.abs(c.L - c.R) + Math.abs(c.T - c.B); }
+            var u = used(B) - used(A);
+            if (u) return u;
+            if (n >= 4) {
+              var a4 = used(A) === 4, b4 = used(B) === 4;
+              if (a4 !== b4) return a4 ? -1 : 1;
+            }
+            var vh = vHeavy(B) - vHeavy(A);
+            if (vh) return vh;
+            return balancedSides(A) - balancedSides(B);
+          });
+        }
+        return out;
+      }
+      function assign(counts) {
+        var arms = { T: [], B: [], L: [], R: [] };
+        var names = [], k, i;
+        function pushTimes(name, q) { for (k = 0; k < q; k++) names.push(name); }
+        pushTimes('T', counts.T);
+        pushTimes('R', counts.R);
+        pushTimes('B', counts.B);
+        pushTimes('L', counts.L);
+        for (i = 0; i < n; i++) arms[names[i]].push(i);
+        return arms;
+      }
+      function place(arms) {
+        var pts = new Array(n);
+        function placeStack(idxs, dir) {
+          if (!idxs.length) return;
+          var i, it, y, x, th;
+          if (dir === 'T') {
+            y = pb.y - stem2;
+            for (i = 0; i < idxs.length; i++) {
+              it = items[idxs[i]];
+              y -= it.vh / 2;
+              pts[idxs[i]] = { x: c.x, y: y, vw: it.vw, vh: it.vh, w: it.w, h: it.h, f: it.f, lines: it.lines, arm: 'T' };
+              y -= it.vh / 2 + gap2;
+            }
+          } else if (dir === 'B') {
+            y = pb.y + pb.height + stem2;
+            for (i = 0; i < idxs.length; i++) {
+              it = items[idxs[i]];
+              y += it.vh / 2;
+              pts[idxs[i]] = { x: c.x, y: y, vw: it.vw, vh: it.vh, w: it.w, h: it.h, f: it.f, lines: it.lines, arm: 'B' };
+              y += it.vh / 2 + gap2;
+            }
+          } else if (dir === 'L') {
+            x = pb.x - stem2;
+            th = stackH(idxs);
+            y = c.y - th / 2;
+            for (i = 0; i < idxs.length; i++) {
+              it = items[idxs[i]];
+              y += it.vh / 2;
+              pts[idxs[i]] = { x: x - it.vw / 2, y: y, vw: it.vw, vh: it.vh, w: it.w, h: it.h, f: it.f, lines: it.lines, arm: 'L' };
+              y += it.vh / 2 + gap2;
+            }
+          } else {
+            x = pb.x + pb.width + stem2;
+            th = stackH(idxs);
+            y = c.y - th / 2;
+            for (i = 0; i < idxs.length; i++) {
+              it = items[idxs[i]];
+              y += it.vh / 2;
+              pts[idxs[i]] = { x: x + it.vw / 2, y: y, vw: it.vw, vh: it.vh, w: it.w, h: it.h, f: it.f, lines: it.lines, arm: 'R' };
+              y += it.vh / 2 + gap2;
+            }
+          }
+        }
+        placeStack(arms.T, 'T');
+        placeStack(arms.B, 'B');
+        placeStack(arms.L, 'L');
+        placeStack(arms.R, 'R');
+        return pts;
+      }
+      function inLoose(pts) {
+        var i, p;
+        for (i = 0; i < pts.length; i++) {
+          p = pts[i];
+          if (p.x - p.vw / 2 < loose.x || p.x + p.vw / 2 > loose.x + loose.w ||
+              p.y - p.vh / 2 < loose.y || p.y + p.vh / 2 > loose.y + loose.h) return false;
+        }
+        return true;
+      }
+      function selfHit(pts) {
+        var i, j, a, b;
+        for (i = 0; i < pts.length; i++) for (j = i + 1; j < pts.length; j++) {
+          a = pts[i]; b = pts[j];
+          if (Math.abs(a.x - b.x) < (a.vw + b.vw) / 2 + 4 * s &&
+              Math.abs(a.y - b.y) < (a.vh + b.vh) / 2 + 4 * s) return true;
+        }
+        return false;
+      }
+      function ok(pts) {
+        if (!allPts(pts) || overlapsParent(pts) || selfHit(pts) || !inLoose(pts)) return false;
+        return true;
+      }
+
+      var tries = countsList();
+      var t, pts, shrink, gaps = [10, 7, 5], stems = [12, 9, 7];
+      var best = null, bestOut = 1e9;
+      function overflowAmt(pts) {
+        var i, p, o = 0;
+        for (i = 0; i < pts.length; i++) {
+          p = pts[i];
+          o += Math.max(0, loose.x - (p.x - p.vw / 2));
+          o += Math.max(0, (p.x + p.vw / 2) - (loose.x + loose.w));
+          o += Math.max(0, loose.y - (p.y - p.vh / 2));
+          o += Math.max(0, (p.y + p.vh / 2) - (loose.y + loose.h));
+        }
+        return o;
+      }
+      for (shrink = 0; shrink < gaps.length; shrink++) {
+        gap2 = Math.max(4 * s, gaps[shrink] * s);
+        stem2 = Math.max(5 * s, stems[shrink] * s);
+        for (t = 0; t < tries.length; t++) {
+          pts = place(assign(tries[t]));
+          if (!allPts(pts) || overlapsParent(pts) || selfHit(pts)) continue;
+          if (inLoose(pts)) return finish(pts);
+          var o = overflowAmt(pts);
+          if (o < bestOut) { bestOut = o; best = pts; }
+        }
+      }
+      if (best) return finish(best);
+      return null;
+    }
+
     var narrowView = (vis.w / Math.max(s, 0.001)) < 520;
+    var chosen = null;
+    var tried;
+    /* 窄屏专题放大：小节按十字排在上下左右，不用多列网格 */
+    if (narrowView) chosen = packCross();
+    else chosen = radialViaChapter ? null : packKidRadial();
     /* 桌面仍优先左右立柱，避免四小节被铺成通栏后画面偏空 */
     if (!narrowView && !chosen) {
       var lr = sides.filter(function (sd) { return sd.name === 'R' || sd.name === 'L'; });
@@ -1002,20 +1178,13 @@
     }
     var tallStack = 0;
     for (var ti = 0; ti < items.length; ti++) tallStack += items[ti].vh + (ti ? gap : 0);
-    var preferTwo = items.length > 4 || (items.length > 3 && (narrowView || tallStack > vis.h * 0.72));
+    var preferTwo = items.length > 4 || (items.length > 3 && tallStack > vis.h * 0.72);
     var colOrder = preferTwo ? [2, 1] : (items.length > 3 ? [1, 2] : [1]);
-    /* 窄屏优先在专题上下把小节排成换行网格，再试左右多列 */
-    if (narrowView && items.length > 2) {
-      var tb = sides.filter(function (sd) { return sd.name === 'T' || sd.name === 'B'; });
-      tb.sort(function (a, b) { return b.room - a.room; });
-      for (var nwi = 0; nwi < tb.length && !chosen; nwi++) {
-        var wrapped0 = packWrapped(tb[nwi]);
-        if (wrapped0 && !overlap(wrapped0.pts) && inView(wrapped0.pts)) chosen = wrapped0;
-      }
-    }
-    for (var si = 0; si < sides.length && !chosen; si++) {
-      for (var coi = 0; coi < colOrder.length && !chosen; coi++) {
-        chosen = packColumn(sides[si], colOrder[coi]);
+    if (!narrowView) {
+      for (var si = 0; si < sides.length && !chosen; si++) {
+        for (var coi = 0; coi < colOrder.length && !chosen; coi++) {
+          chosen = packColumn(sides[si], colOrder[coi]);
+        }
       }
     }
 
@@ -1091,11 +1260,10 @@
       return allPts(pts2) ? finish(pts2) : null;
     }
 
-    if (!chosen) {
+    if (!narrowView && !chosen) {
       for (var wi = 0; wi < sides.length && !chosen; wi++) {
         var wrapped = packWrapped(sides[wi]);
         if (wrapped && !overlap(wrapped.pts) && inView(wrapped.pts)) chosen = wrapped;
-
       }
     }
 
@@ -1161,13 +1329,13 @@
       return finish(pts);
     }
 
-    if (!chosen || overlap(chosen.pts) || !inView(chosen.pts)) {
+    if (!narrowView && (!chosen || overlap(chosen.pts) || !inView(chosen.pts))) {
       var grid = packFitGrid() || packBands();
       if (grid) chosen = grid;
       else if (chosen && (overlap(chosen.pts) || !inView(chosen.pts))) chosen = null;
     }
 
-    if (!chosen) {
+    if (!narrowView && !chosen) {
       /* 退回扇形：朝向空隙最大的一侧，用视觉尺寸 */
       var heading = sides[0].ang;
       var o = mapCenter();
@@ -1264,6 +1432,22 @@
   }
 
   function branchEnds(c, pb, pt) {
+    if (pt.arm === 'T') {
+      return { x0: c.x, y0: c.y - pb.height / 2, x1: pt.x, y1: pt.y + pt.vh / 2 };
+    }
+    if (pt.arm === 'B') {
+      return { x0: c.x, y0: c.y + pb.height / 2, x1: pt.x, y1: pt.y - pt.vh / 2 };
+    }
+    if (pt.arm === 'L' || pt.arm === 'R') {
+      var xEdge = pt.arm === 'L' ? (c.x - pb.width / 2) : (c.x + pb.width / 2);
+      var xKid = pt.arm === 'L' ? (pt.x + pt.vw / 2) : (pt.x - pt.vw / 2);
+      var yEdge = Math.max(c.y - pb.height / 2 + 2, Math.min(pt.y, c.y + pb.height / 2 - 2));
+      if (Math.abs(yEdge - pt.y) < 1.2) {
+        return { x0: xEdge, y0: pt.y, x1: xKid, y1: pt.y };
+      }
+      var xSpine = (xEdge + xKid) / 2;
+      return { x0: xEdge, y0: yEdge, x1: xKid, y1: pt.y, corners: [{ x: xSpine, y: yEdge }, { x: xSpine, y: pt.y }] };
+    }
     var ang = Math.atan2(pt.y - c.y, pt.x - c.x);
     var p0 = rayEdge(c.x, c.y, pb.width / 2 + 1, pb.height / 2 + 1, ang);
     var back = Math.atan2(c.y - pt.y, c.x - pt.x);
@@ -1273,7 +1457,19 @@
 
   function writeBranch(br, ends, s) {
     var w0 = Math.max(0.55, 1.8 * s), w1 = Math.max(0.22, 0.4 * s);
-    br.setAttribute('d', taperPath(ends.x0, ends.y0, ends.x1, ends.y1, w0, w1));
+    var pts = [{ x: ends.x0, y: ends.y0 }];
+    if (ends.corners) {
+      for (var ci = 0; ci < ends.corners.length; ci++) pts.push(ends.corners[ci]);
+    }
+    pts.push({ x: ends.x1, y: ends.y1 });
+    var d = '', i, t, wA, wB;
+    for (i = 0; i < pts.length - 1; i++) {
+      t = i / Math.max(1, pts.length - 1);
+      wA = w0 + (w1 - w0) * t;
+      wB = w0 + (w1 - w0) * ((i + 1) / Math.max(1, pts.length - 1));
+      d += taperPath(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, wA, wB);
+    }
+    br.setAttribute('d', d);
     br.setAttribute('data-x0', ends.x0.toFixed(2));
     br.setAttribute('data-y0', ends.y0.toFixed(2));
     br.setAttribute('data-x1', ends.x1.toFixed(2));
@@ -1527,23 +1723,28 @@
 
   function unionOverflows(topic) {
     var box = unionBox(topic);
-    var vis = visibleLayoutRect();
+    var vis = innerUserRect();
     return box.x < vis.x || box.y < vis.y ||
       box.x + box.width > vis.x + vis.w ||
       box.y + box.height > vis.y + vis.h;
   }
 
   function fitUnion(topic) {
-    /* 视野内重排优先，镜头只做极小平移，不改倍率 */
+    /* 视野内重排优先，镜头只做平移，不改倍率；说明卡在导图下方，不再预留底部三成 */
     if (!cam.querySelector('.mp-subs')) return false;
-    if (!unionOverflows(topic)) return false;
     var box = unionBox(topic);
-    var vis = visibleUserRect();
+    var vis = innerUserRect();
     var dx = 0, dy = 0;
-    if (box.x < vis.x + 12) dx = (vis.x + 12) - box.x;
-    if (box.x + box.width > vis.x + vis.w - 12) dx = (vis.x + vis.w - 12) - (box.x + box.width);
-    if (box.y < vis.y + 12) dy = (vis.y + 12) - box.y;
-    if (box.y + box.height > vis.y + vis.h * 0.70) dy = (vis.y + vis.h * 0.70) - (box.y + box.height);
+    if (box.width > vis.w) dx = (vis.x + vis.w / 2) - (box.x + box.width / 2);
+    else {
+      if (box.x < vis.x) dx = vis.x - box.x;
+      if (box.x + box.width > vis.x + vis.w) dx = (vis.x + vis.w) - (box.x + box.width);
+    }
+    if (box.height > vis.h) dy = (vis.y + vis.h / 2) - (box.y + box.height / 2);
+    else {
+      if (box.y < vis.y) dy = vis.y - box.y;
+      if (box.y + box.height > vis.y + vis.h) dy = (vis.y + vis.h) - (box.y + box.height);
+    }
     if (!dx && !dy) return false;
     /* 用户坐标平移 vis 等价于相机 tx/ty 增减 dx*k */
     var k = (cam._cur && cam._cur.k) || st.k || 1;
@@ -2437,7 +2638,7 @@
     var ay = 0.40;
     if (kind === 'topic') {
       var vs = viewScale();
-      if (vs < 0.55) ay = 0.26; /* 窄屏把专题靠上，下面留给小节 */
+      if (vs < 0.55) ay = 0.42; /* 窄屏把专题放中央，上下左右都留给小节 */
     }
     st.ty = V.h * ay - k * cy;
   }
