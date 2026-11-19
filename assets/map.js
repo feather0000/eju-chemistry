@@ -541,19 +541,28 @@
     return (data.topics && data.topics[slug] && data.topics[slug].children) || [];
   }
 
+  function viewScale() {
+    var r = svg.getBoundingClientRect();
+    var vb = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 1160;
+    if (!r.width || !vb) return 1;
+    return r.width / vb;
+  }
+
   function kidScale() {
     var k = (cam._cur && cam._cur.k) || st.k || 1;
     if (k < 1) k = 1;
-    /* 略大于总览字号，放大后保持大约恒定的屏幕大小 */
-    var s = 1.35 / k;
-    return s > 1 ? 1 : s;
+    /* 让 CSS 字号近似等于屏幕像素，桌面和窄屏都保持可读 */
+    var vs = viewScale();
+    if (vs < 0.05) vs = 0.05;
+    return 1 / (vs * k);
   }
 
   function visibleLayoutRect() {
     var vis = visibleUserRect();
     var k = (cam._cur && cam._cur.k) || st.k || 1;
     var p = 16 / k;
-    var bottomFrac = (card && !card.hasAttribute('hidden')) ? 0.32 : 0.14;
+    /* 说明卡在导图下方，不再按叠在画面上预留三成高度 */
+    var bottomFrac = 0.12;
     return { x: vis.x + p, y: vis.y + p, w: vis.w - 2 * p, h: vis.h * (1 - bottomFrac) - p };
   }
 
@@ -585,6 +594,38 @@
     return { pb: pb, c: c };
   }
 
+  function wrapToLines(zh, maxW, fs, maxLines) {
+    zh = (zh || '') + '';
+    maxLines = maxLines || 2;
+    if (!zh) return [''];
+    if (tw(zh, fs) <= maxW) return [zh];
+    var marks = ['（', '・', '，', '、', ' ', '(', '）', ')', '—', '–'];
+    var lines = [], rest = zh;
+    while (rest && lines.length < maxLines) {
+      var last = lines.length === maxLines - 1;
+      if (tw(rest, fs) <= maxW) { lines.push(rest); break; }
+      if (last) {
+        var t = rest;
+        while (t.length > 1 && tw(t + '…', fs) > maxW) t = t.slice(0, -1);
+        lines.push(t + '…');
+        break;
+      }
+      var best = 0;
+      for (var i = 1; i <= rest.length; i++) {
+        var a = rest.slice(0, i);
+        if (tw(a, fs) > maxW) break;
+        var ch = rest.charAt(i) || '';
+        var prev = rest.charAt(i - 1);
+        if (!ch || marks.indexOf(ch) >= 0 || marks.indexOf(prev) >= 0 || /[\u3400-\u9fff]/.test(prev)) best = i;
+        else best = i;
+      }
+      if (best <= 0) best = 1;
+      lines.push(rest.slice(0, best).replace(/\s+$/, ''));
+      rest = rest.slice(best).replace(/^\s+/, '');
+    }
+    return lines.length ? lines : [zh];
+  }
+
   function labelSizes(kids) {
     function fitText(str, size, maxW) {
       str = (str || '') + '';
@@ -594,11 +635,26 @@
       while (t.length > 1 && tw(t + '…', size) > maxW) t = t.slice(0, -1);
       return t + '…';
     }
-    var MAXW = 168;
+    var TITLE_FS = 16.5, FORM_FS = 14.5;
+    var sc = kidScale();
+    var vis = visibleLayoutRect();
+    var avail = vis && sc ? vis.w / sc : 280;
+    /* 窄屏上把框宽限制在大约半列，好排两列或换行 */
+    var many = kids.length >= 5;
+    var frac = (avail < 520) ? (many ? 0.30 : 0.42) : 0.46;
+    var MAXW = Math.min(280, Math.max(many && avail < 520 ? 100 : 128, avail * frac));
+    var minW = Math.min(124, Math.max(avail < 520 ? 96 : 108, MAXW * 0.78));
     return kids.map(function (k) {
-      var f = fitText(k.f, 10, MAXW - 20);
-      var w = Math.max(tw(k.zh, 11.4), tw(f, 10), 80) + 20;
-      return { f: f, w: Math.min(Math.max(w, 88), MAXW), h: f ? 44 : 32 };
+      var lines = wrapToLines(k.zh, MAXW - 22, TITLE_FS, 2);
+      var f = fitText(k.f, FORM_FS, MAXW - 22);
+      var twid = 0;
+      for (var i = 0; i < lines.length; i++) twid = Math.max(twid, tw(lines[i], TITLE_FS));
+      if (f) twid = Math.max(twid, tw(f, FORM_FS));
+      var w = Math.min(Math.max(twid + 22, minW), MAXW);
+      var h = avail < 520
+        ? (16 + lines.length * 18 + (f ? 16 : 2))
+        : (22 + lines.length * 19 + (f ? 20 : 4));
+      return { f: f, w: w, h: h, lines: lines };
     });
   }
 
@@ -606,6 +662,7 @@
     var others = [];
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (el) {
       if (el === parent) return;
+      if (el.classList && el.classList.contains('mp-recede')) return;
       var box = el.querySelector('.mp-box') || el.querySelector('circle');
       var b = elemUserRect(box);
       if (b && b.width && b.height) others.push(b);
@@ -624,15 +681,22 @@
     var gap = 14 * s;
     var stem = Math.max(24 * s, 14 * s);
     var items = boxes.map(function (b) {
-      return { w: b.w, h: b.h, vw: b.w * s, vh: b.h * s, f: b.f };
+      return { w: b.w, h: b.h, vw: b.w * s, vh: b.h * s, f: b.f, lines: b.lines };
     });
     var others = neighborRects(parent);
 
     function hitsRect(p, r, pad) {
+      if (!p || !r) return false;
       return !(p.x + p.vw / 2 < r.x - pad || p.x - p.vw / 2 > r.x + r.width + pad ||
                p.y + p.vh / 2 < r.y - pad || p.y - p.vh / 2 > r.y + r.height + pad);
     }
+    function allPts(pts) {
+      if (!pts || pts.length !== items.length) return false;
+      for (var i = 0; i < pts.length; i++) if (!pts[i] || pts[i].x == null) return false;
+      return true;
+    }
     function overlapsParent(pts) {
+      if (!allPts(pts)) return true;
       for (var i = 0; i < pts.length; i++) if (hitsRect(pts[i], pb, 8 * s)) return true;
       return false;
     }
@@ -661,6 +725,8 @@
       for (var i = 0; i < pts.length; i++) {
         pts[i].a = Math.atan2(pts[i].y - c.y, pts[i].x - c.x);
         pts[i].s = s;
+        if (!pts[i].lines && items[i] && items[i].lines) pts[i].lines = items[i].lines;
+        if (pts[i].f == null && items[i]) pts[i].f = items[i].f;
       }
       return { pts: pts, s: s, c: c, pb: pb };
     }
@@ -775,8 +841,78 @@
           }
         }
       }
-      if (!pts.every(Boolean)) return null;
-      if (overlap(pts) || !inView(pts)) return null;
+      function selfBad(list) {
+        if (!list.every(Boolean)) return true;
+        if (overlapsParent(list) || !inView(list)) return true;
+        for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length; j++) {
+          var a = list[i], b = list[j];
+          if (Math.abs(a.x - b.x) < (a.vw + b.vw) / 2 + 6 * s && Math.abs(a.y - b.y) < (a.vh + b.vh) / 2 + 6 * s) return true;
+        }
+        return false;
+      }
+      if (!selfBad(pts)) return finish(pts);
+      return null;
+    }
+
+    function packBands() {
+      /* 把视野里专题以外的上下左右带通铺成网格，尽量总能放下 */
+      var gap2 = Math.max(6 * s, Math.min(gap, 10 * s));
+      var bands = [
+        { x: vis.x, y: pb.y + pb.height + stem, w: vis.w, h: (vis.y + vis.h) - (pb.y + pb.height + stem) },
+        { x: vis.x, y: vis.y, w: vis.w, h: pb.y - stem - vis.y },
+        { x: pb.x + pb.width + stem, y: pb.y, w: (vis.x + vis.w) - (pb.x + pb.width + stem), h: pb.height },
+        { x: vis.x, y: pb.y, w: pb.x - stem - vis.x, h: pb.height }
+      ];
+      function clip(r) {
+        var x = Math.max(r.x, vis.x), y = Math.max(r.y, vis.y);
+        var x2 = Math.min(r.x + r.w, vis.x + vis.w), y2 = Math.min(r.y + r.h, vis.y + vis.h);
+        return { x: x, y: y, w: x2 - x, h: y2 - y };
+      }
+      bands = bands.map(clip).filter(function (r) { return r.w > 40 * s && r.h > 28 * s; });
+      bands.sort(function (a, b) { return (b.w * b.h) - (a.w * a.h); });
+      if (!bands.length) return null;
+      var pts = new Array(items.length);
+      var idx = 0;
+      for (var bi = 0; bi < bands.length && idx < items.length; bi++) {
+        var r = bands[bi];
+        var maxW = 0, maxH = 0;
+        for (var k = idx; k < items.length; k++) {
+          if (items[k].vw > maxW) maxW = items[k].vw;
+          if (items[k].vh > maxH) maxH = items[k].vh;
+        }
+        var nCol = Math.max(1, Math.floor((r.w + gap2) / (maxW + gap2)));
+        var nRow = Math.max(1, Math.floor((r.h + gap2) / (maxH + gap2)));
+        var cap = nCol * nRow;
+        var take = Math.min(cap, items.length - idx);
+        if (take <= 0) continue;
+        nCol = Math.min(nCol, take);
+        nRow = Math.ceil(take / nCol);
+        var colW = Math.min(maxW, (r.w - gap2 * (nCol - 1)) / nCol);
+        var rowH = Math.min(maxH, (r.h - gap2 * (nRow - 1)) / nRow);
+        var gridW = nCol * colW + (nCol - 1) * gap2;
+        var gridH = nRow * rowH + (nRow - 1) * gap2;
+        var x0 = r.x + Math.max(0, (r.w - gridW) / 2);
+        var y0 = r.y + Math.max(0, (r.h - gridH) / 2);
+        for (var t = 0; t < take; t++) {
+          var it = items[idx];
+          var col = t % nCol, row = Math.floor(t / nCol);
+          var vw = Math.min(it.vw, colW), vh = Math.min(it.vh, rowH);
+          pts[idx] = { x: x0 + col * (colW + gap2) + vw / 2, y: y0 + row * (rowH + gap2) + vh / 2, vw: vw, vh: vh, w: vw / s, h: vh / s, f: it.f, lines: it.lines };
+          idx++;
+        }
+      }
+      if (!allPts(pts)) return null;
+      if (overlapsParent(pts)) return null;
+
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (p.x - p.vw / 2 < vis.x - 1 || p.x + p.vw / 2 > vis.x + vis.w + 1 ||
+            p.y - p.vh / 2 < vis.y - 1 || p.y + p.vh / 2 > vis.y + vis.h + 1) return null;
+        for (var j = i + 1; j < pts.length; j++) {
+          var q = pts[j];
+          if (Math.abs(p.x - q.x) < (p.vw + q.vw) / 2 - 0.5 && Math.abs(p.y - q.y) < (p.vh + q.vh) / 2 - 0.5) return null;
+        }
+      }
       return finish(pts);
     }
 
@@ -841,7 +977,7 @@
         for (var i2 = 0; i2 < n; i2++) idx.push(i2);
         pts = ptsAt(R, n, start, 0, idx);
       }
-      if (!pts.every(Boolean)) return null;
+      if (!allPts(pts)) return null;
       if (overlapsParent(pts)) return null;
       /* 环上允许略微靠近邻居，但不画出视野 */
       if (!inView(pts) && kind === 'ring') {
@@ -854,9 +990,33 @@
 
     var chosen = radialViaChapter ? null : packKidRadial();
     var tried;
+    var narrowView = (vis.w / Math.max(s, 0.001)) < 520;
+    /* 桌面仍优先左右立柱，避免四小节被铺成通栏后画面偏空 */
+    if (!narrowView && !chosen) {
+      var lr = sides.filter(function (sd) { return sd.name === 'R' || sd.name === 'L'; });
+      lr.sort(function (a, b) { return b.room - a.room; });
+      for (var lri = 0; lri < lr.length && !chosen; lri++) {
+        chosen = packColumn(lr[lri], 1);
+        if (!chosen && items.length > 3) chosen = packColumn(lr[lri], 2);
+      }
+    }
+    var tallStack = 0;
+    for (var ti = 0; ti < items.length; ti++) tallStack += items[ti].vh + (ti ? gap : 0);
+    var preferTwo = items.length > 4 || (items.length > 3 && (narrowView || tallStack > vis.h * 0.72));
+    var colOrder = preferTwo ? [2, 1] : (items.length > 3 ? [1, 2] : [1]);
+    /* 窄屏优先在专题上下把小节排成换行网格，再试左右多列 */
+    if (narrowView && items.length > 2) {
+      var tb = sides.filter(function (sd) { return sd.name === 'T' || sd.name === 'B'; });
+      tb.sort(function (a, b) { return b.room - a.room; });
+      for (var nwi = 0; nwi < tb.length && !chosen; nwi++) {
+        var wrapped0 = packWrapped(tb[nwi]);
+        if (wrapped0 && !overlap(wrapped0.pts) && inView(wrapped0.pts)) chosen = wrapped0;
+      }
+    }
     for (var si = 0; si < sides.length && !chosen; si++) {
-      chosen = packColumn(sides[si], 1);
-      if (!chosen && items.length > 3) chosen = packColumn(sides[si], 2);
+      for (var coi = 0; coi < colOrder.length && !chosen; coi++) {
+        chosen = packColumn(sides[si], colOrder[coi]);
+      }
     }
 
     function packWrapped(side) {
@@ -894,7 +1054,7 @@
           }
           y += rows[r3].h + gap;
         }
-        return pts.every(Boolean) ? finish(pts) : null;
+        return allPts(pts) ? finish(pts) : null;
       }
       maxH = Math.max(40, vis.h - 8 * s);
       var cols = [], col = [], ch = 0;
@@ -928,16 +1088,83 @@
         }
         x2 += cols[c2].w + gap;
       }
-      return pts2.every(Boolean) ? finish(pts2) : null;
+      return allPts(pts2) ? finish(pts2) : null;
     }
 
     if (!chosen) {
       for (var wi = 0; wi < sides.length && !chosen; wi++) {
         var wrapped = packWrapped(sides[wi]);
-        if (wrapped && !overlapsParent(wrapped.pts) && inView(wrapped.pts)) chosen = wrapped;
-        else if (wrapped && !overlapsParent(wrapped.pts) && !chosen) chosen = wrapped; /* 优先不压专题，允许略出画框 */
+        if (wrapped && !overlap(wrapped.pts) && inView(wrapped.pts)) chosen = wrapped;
 
       }
+    }
+
+    function packFitGrid() {
+      var gap2 = Math.max(8 * s, Math.min(gap, 12 * s));
+      var regions = [
+        { x: vis.x, y: pb.y + pb.height + stem, w: vis.w, h: (vis.y + vis.h) - (pb.y + pb.height + stem) },
+        { x: vis.x, y: vis.y, w: vis.w, h: pb.y - stem - vis.y },
+        { x: pb.x + pb.width + stem, y: pb.y, w: (vis.x + vis.w) - (pb.x + pb.width + stem), h: pb.height },
+        { x: vis.x, y: pb.y, w: pb.x - stem - vis.x, h: pb.height }
+      ];
+      function clip(r) {
+        var x = Math.max(r.x, vis.x), y = Math.max(r.y, vis.y);
+        var x2 = Math.min(r.x + r.w, vis.x + vis.w), y2 = Math.min(r.y + r.h, vis.y + vis.h);
+        return { x: x, y: y, w: x2 - x, h: y2 - y };
+      }
+      regions = regions.map(clip).filter(function (r) { return r.w > 36 * s && r.h > 32 * s; });
+      regions.sort(function (a, b) { return (b.w * b.h) - (a.w * a.h); });
+      if (!regions.length) return null;
+      var pts = new Array(items.length);
+      var idx = 0;
+      for (var ri = 0; ri < regions.length && idx < items.length; ri++) {
+        var r = regions[ri];
+        var colW = 0;
+        for (var k = idx; k < items.length; k++) if (items[k].vw > colW) colW = items[k].vw;
+        var nCol = Math.max(1, Math.floor((r.w + gap2) / (colW + gap2)));
+        if (nCol > items.length - idx) nCol = items.length - idx;
+        var rows = [];
+        var cur = [], rw = 0, rh = 0;
+        function pushRow() {
+          if (!cur.length) return;
+          rows.push({ items: cur, w: rw, h: rh });
+          cur = []; rw = 0; rh = 0;
+        }
+        while (idx < items.length) {
+          var it = items[idx];
+          var nextW = rw + (cur.length ? gap2 : 0) + it.vw;
+          if (cur.length && (nextW > r.w + 0.5 || cur.length >= nCol)) pushRow();
+          var rowH = rows.reduce(function (a, row) { return a + row.h + gap2; }, 0);
+          if (rows.length && rowH + Math.max(rh, it.vh) > r.h + 0.5) break;
+          cur.push({ i: idx, it: it });
+          rw += it.vw + (cur.length > 1 ? gap2 : 0);
+          if (it.vh > rh) rh = it.vh;
+          idx++;
+        }
+        pushRow();
+        var totalH = 0;
+        for (var a = 0; a < rows.length; a++) totalH += rows[a].h + (a ? gap2 : 0);
+        var y = r.y + Math.max(0, (r.h - totalH) / 2);
+        for (var a2 = 0; a2 < rows.length; a2++) {
+          var row = rows[a2];
+          var x = r.x + Math.max(0, (r.w - row.w) / 2);
+          for (var b = 0; b < row.items.length; b++) {
+            var slot = row.items[b], it2 = slot.it;
+            pts[slot.i] = { x: x + it2.vw / 2, y: y + row.h / 2, vw: it2.vw, vh: it2.vh, w: it2.w, h: it2.h, f: it2.f, lines: it2.lines };
+            x += it2.vw + gap2;
+          }
+          y += row.h + gap2;
+        }
+      }
+      if (!allPts(pts)) return null;
+      if (overlap(pts) || !inView(pts)) return null;
+      return finish(pts);
+    }
+
+    if (!chosen || overlap(chosen.pts) || !inView(chosen.pts)) {
+      var grid = packFitGrid() || packBands();
+      if (grid) chosen = grid;
+      else if (chosen && (overlap(chosen.pts) || !inView(chosen.pts))) chosen = null;
     }
 
     if (!chosen) {
@@ -1180,7 +1407,9 @@
     if (!layout) return null;
     var ch = parent.getAttribute('data-ch') || '';
 
+    var fitKey = layout.pts.map(function (p) { return [p.w, p.h, (p.lines || []).join('/')].join(':'); }).join('|');
     if (existing && existing.getAttribute('data-slug') === slug &&
+        existing.getAttribute('data-fit') === fitKey &&
         existing.querySelectorAll('a.mp-sub').length === kids.length) {
       shownSlug = slug;
       applyKidPositions(existing, layout, { animate: false, instant: true });
@@ -1191,6 +1420,7 @@
     var g = document.createElementNS(NS, 'g');
     g.setAttribute('class', 'mp-subs mp-c' + ch);
     g.setAttribute('data-slug', slug);
+    g.setAttribute('data-fit', fitKey);
     cam.appendChild(g);
     var geom = { c: layout.c, pb: layout.pb };
 
@@ -1211,7 +1441,7 @@
       a.setAttribute('tabindex', '-1');
       var dispF = pt.f || '';
       var bw = pt.w, bh = pt.h;
-      var hitW = Math.max(bw, 80), hitH = Math.max(bh, 64);
+      var hitW = Math.max(bw, 100), hitH = Math.max(bh, 76);
       var ends = branchEnds(geom.c, geom.pb, pt);
       var br = document.createElementNS(NS, 'path');
       br.setAttribute('class', 'mp-subbr');
@@ -1239,15 +1469,28 @@
       var title = document.createElementNS(NS, 'text');
       title.setAttribute('class', 'mp-t');
       title.setAttribute('x', '0');
-      title.setAttribute('y', dispF ? '-4' : '4');
       title.setAttribute('text-anchor', 'middle');
-      title.textContent = kid.zh;
+      var lines = pt.lines && pt.lines.length ? pt.lines : [kid.zh];
+      var nL = lines.length;
+      var titleY0 = dispF ? (-8 - (nL > 1 ? (nL - 1) * 10 : 0)) : (nL === 1 ? 6 : -((nL - 1) * 19) / 2 + 6);
+      title.setAttribute('y', String(titleY0));
+      if (nL <= 1) {
+        title.textContent = lines[0] || '';
+      } else {
+        for (var li = 0; li < nL; li++) {
+          var tsp = document.createElementNS(NS, 'tspan');
+          tsp.setAttribute('x', '0');
+          tsp.setAttribute('dy', li === 0 ? '0' : '19');
+          tsp.textContent = lines[li];
+          title.appendChild(tsp);
+        }
+      }
       gi.appendChild(hit); gi.appendChild(rect); gi.appendChild(title);
       if (dispF) {
         var ft = document.createElementNS(NS, 'text');
         ft.setAttribute('class', 'mp-f');
         ft.setAttribute('x', '0');
-        ft.setAttribute('y', '13');
+        ft.setAttribute('y', String(17 + (nL > 1 ? (nL - 1) * 8 : 0)));
         ft.setAttribute('text-anchor', 'middle');
         ft.textContent = dispF;
         gi.appendChild(ft);
@@ -1525,8 +1768,13 @@
 
   function topicScaleForK(k) {
     if (k < 1) k = 1;
+    var vs = viewScale();
+    if (vs < 0.05) vs = 0.05;
     var s = 1.25 / k;
-    return s > 1 ? 1 : s;
+    /* 窄屏上把专题标题抬到至少约 15px */
+    var need = 15 / (16 * vs * k);
+    if (s < need) s = need;
+    return s;
   }
 
   function chapterTopics(ch) {
@@ -1536,11 +1784,42 @@
   }
 
   /* 按原方位排序后均匀铺在环或弧上；超过 10 个用双环。 */
+  function ringOverflows(placed, vis) {
+    if (!placed || !placed.length) return false;
+    var i, p, hw, hh, pad = 6;
+    var boxes = [];
+    for (i = 0; i < placed.length; i++) {
+      p = placed[i];
+      if (!p || p.x == null) continue;
+      hw = (p.vw || (p.size && p.size.w * p.s) || 80) / 2;
+      hh = (p.vh || (p.size && p.size.h * p.s) || 40) / 2;
+      if (p.x - hw < vis.x + pad || p.x + hw > vis.x + vis.w - pad || p.y - hh < vis.y + pad || p.y + hh > vis.y + vis.h - pad) return true;
+      var grow = placed.length <= 4 ? 2 : 6;
+      boxes.push({ x: p.x, y: p.y, hw: hw + grow, hh: hh + grow });
+    }
+    for (i = 0; i < boxes.length; i++) {
+      for (var j = i + 1; j < boxes.length; j++) {
+        var a = boxes[i], b = boxes[j];
+        var pad2 = placed.length <= 4 ? 4 : 6;
+        if (Math.abs(a.x - b.x) < a.hw + b.hw + pad2 && Math.abs(a.y - b.y) < a.hh + b.hh + pad2) return true;
+      }
+    }
+    return false;
+  }
+
   function placeOnRing(center, items, vis, k) {
     var n = items.length;
     if (!n) return [];
-    var s = topicScaleForK(k);
-    var i, it, maxHalf = 0;
+    var vs = viewScale();
+    if (vs < 0.05) vs = 0.05;
+    var sWant = topicScaleForK(k);
+    var sFloor = 12 / (16 * vs * k);
+    if (sFloor > sWant) sFloor = sWant;
+    var s = sWant;
+    var i, it, out = [];
+    var attempt;
+    for (attempt = 0; attempt < 8; attempt++) {
+    var maxHalf = 0;
     for (i = 0; i < n; i++) {
       it = items[i];
       it.s = s;
@@ -1549,9 +1828,14 @@
       var half = Math.hypot(it.vw, it.vh) / 2;
       if (half > maxHalf) maxHalf = half;
     }
-    var inner = (items.innerR || 42) + 28 * s;
-    var minR = inner + maxHalf + 26 * s;
-    var need = maxHalf * 2 + 22 * s;
+    var vsNow = viewScale();
+    if (vsNow < 0.05) vsNow = 0.05;
+    var gapU = 12 / (Math.max(k, 1) * vsNow);
+    if (gapU > 28) gapU = 28;
+    if (gapU < 8) gapU = 8;
+    var inner = (items.innerR || 42) + gapU * 1.2;
+    var minR = inner + maxHalf + gapU;
+    var need = maxHalf * 2 + gapU;
     var ranked = items.slice().sort(function (a, b) {
       var aa = Math.atan2(a.home.y - center.y, a.home.x - center.x);
       var bb = Math.atan2(b.home.y - center.y, b.home.x - center.x);
@@ -1561,7 +1845,7 @@
     var availW = vis.w / 2 - maxHalf - 12;
     var availH = vis.h / 2 - maxHalf - 12;
     var maxR = Math.min(availW, availH);
-    var useTwo = n > 10;
+    var useTwo = n > 10 || (n >= 6 && vsNow < 0.55);
     var nInner = useTwo ? Math.ceil(n / 2) : n;
     var nOuter = n - nInner;
     var Rchord = nInner <= 1 ? minR : (need) / (2 * Math.sin(Math.PI / Math.max(nInner, 2)));
@@ -1617,7 +1901,9 @@
           out[items.indexOf(ranked[j2])] = ranked[j2];
         }
       }
-      return out;
+      if (!ringOverflows(out, vis) || s <= sFloor + 1e-6) return out;
+      s = Math.max(sFloor, s * 0.9);
+      continue;
     }
     if (useTwo) {
       put(ranked.slice(0, nInner), R, start, nInner);
@@ -1636,6 +1922,9 @@
       put(ranked, R, start, n);
     }
     for (i = 0; i < out.length; i++) if (!out[i]) out[i] = items[i];
+    if (!ringOverflows(out, vis) || s <= sFloor + 1e-6) return out;
+    s = Math.max(sFloor, s * 0.9);
+    } /* attempt */
     return out;
   }
 
@@ -1874,13 +2163,17 @@
           fml: !!f0, fy: f0 ? f0.getAttribute('y') : null
         };
       }
-      var fs = 16, pad = 18, maxW = 196;
-      var lines = wrapToTwo(zh, maxW - pad, fs);
+      var fs = 16, pad = 16;
+      var vs = viewScale();
+      var maxW = vs < 0.55 ? 108 : 196;
+      var lines = wrapToLines(zh, maxW - pad, fs, vs < 0.55 ? 3 : 2);
       var textW = 0;
       for (var i = 0; i < lines.length; i++) textW = Math.max(textW, tw(lines[i], fs));
-      var w = Math.max(+el.__lab.w, textW + pad);
+      var w = textW + pad;
+      if (vs >= 0.55) w = Math.max(+el.__lab.w, w);
+      else w = Math.max(84, Math.min(w, maxW));
       var two = lines.length > 1;
-      var h = +el.__lab.h + (two ? 20 : 0);
+      var h = +el.__lab.h + Math.max(0, (lines.length - 1) * 18);
       var cx = +el.__lab.x + +el.__lab.w / 2;
       var cy = +el.__lab.y + +el.__lab.h / 2;
       box.setAttribute('x', (cx - w / 2).toFixed(1));
@@ -1893,18 +2186,15 @@
         text.setAttribute('y', (cy - (el.__lab.fml ? 4 : 0)).toFixed(1));
         text.textContent = lines[0];
       } else {
-        var y1 = cy - (el.__lab.fml ? 14 : 8);
+        var y1 = cy - (el.__lab.fml ? (6 + lines.length * 8) : (4 + (lines.length - 1) * 8));
         text.setAttribute('y', y1.toFixed(1));
-        var t1 = document.createElementNS(NS, 'tspan');
-        t1.setAttribute('x', cx.toFixed(1));
-        t1.setAttribute('dy', '0');
-        t1.textContent = lines[0];
-        var t2 = document.createElementNS(NS, 'tspan');
-        t2.setAttribute('x', cx.toFixed(1));
-        t2.setAttribute('dy', '18');
-        t2.textContent = lines[1];
-        text.appendChild(t1);
-        text.appendChild(t2);
+        for (var li = 0; li < lines.length; li++) {
+          var tsp = document.createElementNS(NS, 'tspan');
+          tsp.setAttribute('x', cx.toFixed(1));
+          tsp.setAttribute('dy', li === 0 ? '0' : '18');
+          tsp.textContent = lines[li];
+          text.appendChild(tsp);
+        }
       }
       if (el.__lab.fml) {
         var fml2 = el.querySelector('text.mp-f');
@@ -1929,10 +2219,15 @@
     }
     var cir = chn.querySelector('.mp-nb, .mp-nr, circle');
     items.innerR = cir && cir.getAttribute('r') ? +cir.getAttribute('r') : 42;
-    var placed = placeOnRing(dest, items, vis, k);
-    var list = [];
+    var vs = viewScale();
+    if (vs < 0.05) vs = 0.05;
     var cs = Math.min(1, 1.35 / k);
     if (cs < 0.85) cs = 0.85;
+    var chNeed = 58 / (84 * vs * k);
+    if (cs < chNeed) cs = Math.min(chNeed, 1.7);
+    items.innerR = (items.innerR || 42) * cs;
+    var placed = placeOnRing(dest, items, vis, k);
+    var list = [];
     var chHome = homeCenter(chn);
     list.push({ el: chn, dx: dest.x - chHome.x, dy: dest.y - chHome.y, s: cs });
     for (var j = 0; j < placed.length; j++) {
@@ -2139,7 +2434,12 @@
     var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
     st.k = k;
     st.tx = V.w * 0.50 - k * cx;
-    st.ty = V.h * 0.40 - k * cy;
+    var ay = 0.40;
+    if (kind === 'topic') {
+      var vs = viewScale();
+      if (vs < 0.55) ay = 0.26; /* 窄屏把专题靠上，下面留给小节 */
+    }
+    st.ty = V.h * ay - k * cy;
   }
 
   function markNow(a, topic) {
@@ -2347,6 +2647,19 @@
     })(performance.now());
   }
   armDrift();
+  var resizeTimer = null;
+  function onViewResize() {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      resizeTimer = null;
+      if (kidsPhase === 'on') reflowKids({ instant: reduced() });
+      else if (radialMode === 'chapter' && radialCh) {
+        var chn = svg.querySelector('a.mp-chn[data-ch="' + radialCh + '"]');
+        if (chn) enterChapterRadial(chn, { instant: reduced() });
+      }
+    }, 160);
+  }
+  window.addEventListener('resize', onViewResize);
   if (RM && RM.addEventListener) RM.addEventListener('change', function () {
     if (reduced()) {
       root.classList.remove('mp-live');

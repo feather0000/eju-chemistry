@@ -837,8 +837,8 @@ body.contents {
   stroke: var(--c, var(--ink-3));
   stroke-width: 1.15;
 }
-#map .mp-sub .mp-t { font-size: 11px; fill: var(--ink); }
-#map .mp-sub .mp-f { font-size: 10px; fill: var(--ink-3); font-style: italic; }
+#map .mp-sub .mp-t { font-size: 16.5px; fill: var(--ink); font-family: var(--sans); }
+#map .mp-sub .mp-f { font-size: 14.5px; fill: var(--ink-2); font-family: var(--mp-math); font-style: italic; }
 #map .mp-subbr { fill: var(--c, var(--ink-3)); opacity: 0; pointer-events: none; }
 #map .mp-hit { fill: none; pointer-events: all; }
 #map a.mp-sub.mp-now .mp-box { stroke-width: 2.1; }
