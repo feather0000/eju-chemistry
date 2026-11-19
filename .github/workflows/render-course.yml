@@ -1,0 +1,54 @@
+name: Render course sources
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'content/**'
+      - 'demos_src/**'
+      - 'assets/chem.js'
+      - 'build.py'
+      - 'mapkids.py'
+      - 'homemap.py'
+      - 'verify.py'
+      - 'tests/**'
+      - 'balance.py'
+      - '.github/workflows/render-course.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: render-course-main
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - name: Render and verify the published files
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch --no-tags origin main
+            git checkout --detach FETCH_HEAD
+            python3 build.py
+            python3 verify.py
+            git add -- index.html 404.html topics assets/demos.js assets/nav.js assets/search.json
+            if git diff --cached --quiet; then exit 0; fi
+            git commit -m "Render updated EJU chemistry lessons"
+            if git push origin HEAD:main; then exit 0; fi
+          done
+          exit 1
+      - name: Publish the latest main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent

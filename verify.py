@@ -44,7 +44,7 @@ try:
 except AssertionError as e: bad+=1; print('FAIL tips', e)
 # DEMO-COUNT regression: demos must exist on topic pages and on the hub page
 import re as _re
-_tp=sum(open(f).read().count('data-demo="') for f in glob.glob('topics/*/index.html') if '/demos/' not in f)
+_tp=sum(open(f).read().count('data-demo="') for f in glob.glob('topics/*/index.html') if os.path.basename(os.path.dirname(f)) != 'demos')
 _hub=open('topics/demos/index.html').read().count('data-demo="')
 _js='src="../../assets/demos.js' in open('topics/demos/index.html').read()
 print(f'demos: topic pages {_tp}, hub {_hub}, expected 5, demos.js tag {_js}')
