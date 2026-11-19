@@ -9,14 +9,29 @@
       o += c.toLowerCase().length === 1 ? c.toLowerCase() : c; } return o; }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function bigr(s) { var b = {}; s = s.replace(/\s+/g, ''); for (var i = 0; i < s.length - 1; i++) b[s.substr(i, 2)] = 1; if (s.length === 1) b[s] = 1; return Object.keys(b); }
+  /* 摘要里的公式：索引正文保留了 $…$ 源码。截取窗口时不把公式切成两半，公式段原样输出（不加高亮标记），
+     结果写入页面后交给 KaTeX 渲染；索引在 900 字处截断留下的半个公式（落单的 $ 之后）不显示。 */
+  var MATH = /\$\$[^$]+\$\$|\$[^$]+\$/g;
+  function spans(raw) { var m, S = [], end = raw.length, q = 0; MATH.lastIndex = 0;
+    while ((m = MATH.exec(raw))) { var d = raw.slice(q, m.index).indexOf('$'); if (d >= 0) { end = q + d; break; } S.push([m.index, m.index + m[0].length]); q = m.index + m[0].length; }
+    if (end === raw.length) { var d2 = raw.slice(q).indexOf('$'); if (d2 >= 0) end = q + d2; }
+    return { S: S.filter(function (x) { return x[1] <= end; }), end: end }; }
   function snip(raw, nt, toks) {
-    var p = -1, L = 0; toks.forEach(function (t) { var j = nt.indexOf(t); if (j >= 0 && (p < 0 || j < p)) { p = j; L = t.length; } });
-    var a = Math.max(0, p - 40), s = p < 0 ? raw.slice(0, 110) : raw.slice(a, p + L + 70);
-    var ns = norm(s), out = '', i = 0;
-    while (i < s.length) { var hit = 0; toks.forEach(function (t) { if (t && ns.substr(i, t.length) === t && t.length > hit) hit = t.length; });
-      if (hit) { out += '<mark>' + esc(s.substr(i, hit)) + '</mark>'; i += hit; } else { out += esc(s[i]); i++; } }
-    return (a > 0 && p >= 0 ? '…' : '') + out + (raw.length > (p < 0 ? 110 : p + L + 70) ? '…' : '');
+    var sp = spans(raw), S = sp.S, end = sp.end;
+    var p = -1, L = 0; toks.forEach(function (t) { var j = nt.indexOf(t); if (j >= 0 && j < end && (p < 0 || j < p)) { p = j; L = t.length; } });
+    var a = p < 0 ? 0 : Math.max(0, p - 40), b = Math.min(end, p < 0 ? 110 : p + L + 70);
+    S.forEach(function (x) { if (x[0] < a && a < x[1]) a = x[0]; if (x[0] < b && b < x[1]) b = x[1]; });
+    var out = '', i = a, k = 0;
+    while (i < b) {
+      while (k < S.length && S[k][1] <= i) k++;
+      if (k < S.length && S[k][0] === i) { out += '<span class="sx-m">' + esc(raw.slice(i, S[k][1])) + '</span>'; i = S[k][1]; continue; }
+      var lim = k < S.length ? Math.min(b, S[k][0]) : b, hit = 0;
+      toks.forEach(function (t) { if (t && i + t.length <= lim && nt.substr(i, t.length) === t && t.length > hit) hit = t.length; });
+      if (hit) { out += '<mark>' + esc(raw.substr(i, hit)) + '</mark>'; i += hit; } else { out += esc(raw[i]); i++; }
+    }
+    return (a > 0 ? '…' : '') + out + (raw.length > b ? '…' : '');
   }
+  function tex(el) { if (window.renderMathInElement) try { window.renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: false }, { left: '$', right: '$', display: false }], macros: { '\\B': '\\boxed{\\text{#1}}' }, throwOnError: false }); } catch (e) {} }
   var KINDS = ['', '题', '讲解', '公式', '易错', '技巧', '演示', '术语', '数据', '页'];
   function chips() {
     var w = $('sx-types'); w.innerHTML = KINDS.map(function (k) { return '<button type="button" class="chip" aria-pressed="' + (k === TYPE) + '" data-k="' + k + '">' + (k || '全部') + '</button>'; }).join('');
@@ -39,8 +54,9 @@
     stat.textContent = R.length ? (fuzzy ? '没有完全匹配，下面是相近的 ' : '找到 ') + R.length + ' 条结果' + (R.length > shown ? '，显示前 ' + shown + ' 条' : '') + '。' : '没有找到“' + raw + '”。试试换个写法（日语／中文）或更短的关键词。';
     var hl = fuzzy ? bigr(toks.join('')) : toks;
     res.innerHTML = R.slice(0, shown).map(function (r) { var e = r[1];
-      return '<li><span class="k">' + e[0] + '</span><a href="' + ROOT + e[3] + '">' + snip(e[1], e.ns, hl) + '</a><p>' + snip(e[2], e.nt, hl) + '</p></li>'; }).join('') +
+      return '<li><span class="k">' + e[0] + '</span><a href="' + ROOT + e[3] + '"><span>' + snip(e[1], e.ns, hl) + '</span></a><p>' + snip(e[2], e.nt, hl) + '</p></li>'; }).join('') +
       (R.length > shown ? '<li><button type="button" class="chip" id="sx-more">显示更多</button></li>' : '');
+    tex(res);
     var m = $('sx-more'); if (m) m.onclick = function () { shown += 60; run(true); };
   }
   var tm = 0; $('sx-q').addEventListener('input', function () { clearTimeout(tm); tm = setTimeout(run, 120); });

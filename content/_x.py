@@ -97,7 +97,7 @@ def build_index(TOPICS, out='assets/search.json', skip=('search',)):
         for k, e in enumerate(t['examples']):
             I.append(['题', f'{t["zh"]} 例题 {k+1} {plain(e[0])}', plain(e[1])[:500], u + '#examples'])
         for row in t['terms']:
-            I.append(['术语', f'{row[0]}　{row[1]}', f'{row[2]} · {t["zh"]}', u + '#terms'])
+            I.append(['术语', f'{row[0]} ／ {row[1]}', f'{row[2]} · {t["zh"]}', u + '#terms'])
     open(out, 'w').write(json.dumps(I, ensure_ascii=False, separators=(',', ':')))
     return len(I)
 
