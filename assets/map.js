@@ -1,6 +1,7 @@
 /* 首页知识导图（四站同一份 assets/map.js）
    - 悬停 / 键盘经过：无关分支调淡（.mp-off）；聚焦某节点时锁定在该节点
-   - 单击章：把该章的专题重新围成一圈（或弧），镜头对准章心，其它章淡出；再点专题则小节围着专题成环\n   - 单击专题：平滑放大并显示图鉴式说明卡（简介来自 #mp-data，不新编）
+   - 单击章：把该章的专题重新围成一圈（或弧），镜头对准章心，其它章淡出；关联知识点的虚线平滑隐去
+   - 单击专题：在当前位置局部放大并长出小节（不再把专题移到中心、也不再围成一圈），显示图鉴式说明卡
      Ctrl/⌘/Shift/中键单击仍按链接打开对应页
    - 空白处、说明卡「返回」、Esc：还原
    - 滚轮：默认需按住 Ctrl 或 ⌘（避免抢走页面滚动）；点进图中（.mp-engaged）后可直接滚动缩放、拖动平移
@@ -58,7 +59,7 @@
     card.setAttribute('role', 'region');
     card.setAttribute('aria-live', 'polite');
     card.innerHTML = '<p class="mp-card-k"></p><h3 class="mp-card-h" tabindex="-1"></h3>' +
-      '<p class="mp-card-ja" lang="ja"></p><p class="mp-card-intro"></p>' +
+      '<p class="mp-card-ja" lang="ja"></p><p class="mp-card-f" hidden></p><p class="mp-card-intro"></p>' +
       '<p class="mp-card-acts"><a class="mp-card-go" href="#"></a>' +
       '<button type="button" class="mp-card-back">返回</button></p>';
     var cap = figure.querySelector('figcaption');
@@ -69,11 +70,18 @@
   var elH = card.querySelector('.mp-card-h');
   var elJa = card.querySelector('.mp-card-ja');
   var elIn = card.querySelector('.mp-card-intro');
+  var elF = card.querySelector('.mp-card-f');
+  if (!elF) {
+    elF = document.createElement('p');
+    elF.className = 'mp-card-f';
+    elF.setAttribute('hidden', '');
+    card.insertBefore(elF, elIn);
+  }
   var elGo = card.querySelector('.mp-card-go');
   var elBack = card.querySelector('.mp-card-back');
 
   var hint = document.getElementById('mp-hint');
-  var HINT_IDLE = '点节点可放大查看简介。电脑上按住 Ctrl 或 ⌘ 滚动缩放；点进图中后可直接滚动缩放并拖动。触屏用双指缩放，点进图中后可单指拖动。Esc 或「返回」还原。';
+  var HINT_IDLE = '点节点可放大查看简介。点击导图后可缩放、拖动；未点进时，电脑上请按住 Ctrl 或 ⌘ 滚动缩放。触屏用双指缩放。Esc 或「返回」还原。';
   var HINT_ON = '已可拖动与缩放。Esc 或「返回」还原全图。';
   if (hint) hint.textContent = HINT_IDLE;
 
@@ -326,6 +334,7 @@
         return {
           k: (parent.zh || '专题') + (kid.more ? '' : ' · 小节'),
           zh: kid.zh || '', ja: kid.ja || '', intro: kid.intro || '',
+          f: kid.f || '',
           href: kid.href || a.getAttribute('href'),
           go: kid.more ? '打开专题' : '打开该小节'
         };
@@ -364,6 +373,8 @@
     if (info.ja) { elJa.textContent = info.ja; elJa.removeAttribute('hidden'); }
     else { elJa.textContent = ''; elJa.setAttribute('hidden', ''); }
     elIn.textContent = info.intro || '';
+    if (info.f) { elF.textContent = info.f; elF.removeAttribute('hidden'); }
+    else { elF.textContent = ''; elF.setAttribute('hidden', ''); }
     elGo.setAttribute('href', info.href || '#');
     elGo.textContent = info.go;
     card.removeAttribute('hidden');
@@ -629,7 +640,8 @@
       if (overlapsParent(pts)) return true;
       for (var i = 0; i < pts.length; i++) {
         var p = pts[i];
-        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], 8 * s)) return true;
+        var nPad = (radialViaChapter ? 14 : 8) * s;
+        for (var o = 0; o < others.length; o++) if (hitsRect(p, others[o], nPad)) return true;
       }
       for (var i2 = 0; i2 < pts.length; i2++) for (var j = i2 + 1; j < pts.length; j++) {
         var dx = Math.abs(pts[i2].x - pts[j].x), dy = Math.abs(pts[i2].y - pts[j].y);
@@ -840,7 +852,7 @@
       return finish(pts);
     }
 
-    var chosen = packKidRadial();
+    var chosen = radialViaChapter ? null : packKidRadial();
     var tried;
     for (var si = 0; si < sides.length && !chosen; si++) {
       chosen = packColumn(sides[si], 1);
@@ -1195,6 +1207,7 @@
       if (kid.more) a.setAttribute('data-more', '1');
       var lab = kid.zh + (kid.f ? '：' + kid.f : '');
       a.setAttribute('aria-label', lab);
+      if (kid.f) a.setAttribute('title', kid.f);
       a.setAttribute('tabindex', '-1');
       var dispF = pt.f || '';
       var bw = pt.w, bh = pt.h;
@@ -1583,7 +1596,29 @@
         out[items.indexOf(node)] = node;
       }
     }
-    if (n <= 1) start = -Math.PI / 2;
+    if (n <= 2) {
+      kind = 'arc';
+      /* 一两项用左右横排（略抬高），避免上下对径或斜对角 */
+      var R12 = Math.max(minR, Math.min(maxR * 0.62, minR + 36));
+      if (n === 1) {
+        ranked[0].x = center.x + R12;
+        ranked[0].y = center.y;
+        ranked[0].ang = 0;
+        ranked[0].s = s;
+        out[items.indexOf(ranked[0])] = ranked[0];
+      } else {
+        var spread = 0.42;
+        for (var j2 = 0; j2 < 2; j2++) {
+          var ang2 = (j2 === 0 ? Math.PI + spread : -spread);
+          ranked[j2].x = center.x + R12 * Math.cos(ang2);
+          ranked[j2].y = center.y + R12 * Math.sin(ang2);
+          ranked[j2].ang = ang2;
+          ranked[j2].s = s;
+          out[items.indexOf(ranked[j2])] = ranked[j2];
+        }
+      }
+      return out;
+    }
     if (useTwo) {
       put(ranked.slice(0, nInner), R, start, nInner);
       put(ranked.slice(nInner), R * 1.42, start + Math.PI / Math.max(nOuter, 1), nOuter);
@@ -1667,19 +1702,50 @@
     return { x: h.x + L.dx, y: h.y + L.dy };
   }
 
+  function currentBoxCenter(el) {
+    var L = layoutOf(el);
+    var star = homeCenter(el);
+    var box = el.querySelector('.mp-box');
+    if (box) {
+      var b = boxCenter(el);
+      return {
+        x: star.x + L.dx + L.s * (b.x - star.x),
+        y: star.y + L.dy + L.s * (b.y - star.y)
+      };
+    }
+    return currentCenter(el);
+  }
+
+  function layoutDeltaTo(el, tx, ty, s) {
+    var star = homeCenter(el);
+    if (el.querySelector('.mp-box')) {
+      var b = boxCenter(el);
+      return {
+        dx: tx - (star.x + s * (b.x - star.x)),
+        dy: ty - (star.y + s * (b.y - star.y))
+      };
+    }
+    return { dx: tx - star.x, dy: ty - star.y };
+  }
+
+  function visualUserBox(el) {
+    var c = currentBoxCenter(el);
+    var L = layoutOf(el);
+    var sz = nodeBoxSize(el);
+    var w = sz.w * L.s, h = sz.h * L.s;
+    return { x: c.x - w / 2, y: c.y - h / 2, width: w, height: h };
+  }
+
   function updateSpokes() {
     if (radialMode === 'off' || !radialCh) { clearSpokes(); return; }
     var chn = svg.querySelector('a.mp-chn[data-ch="' + radialCh + '"]');
     if (!chn) return;
-    var c = currentCenter(chn);
+    var c = currentBoxCenter(chn);
     var size = nodeBoxSize(chn);
     var L = layoutOf(chn);
     var hw = (size.w * L.s) / 2, hh = (size.h * L.s) / 2;
     var g = ensureSpokes();
     var topics = chapterTopics(radialCh);
-    if (radialMode === 'topic' && focused && focused.classList.contains('mp-tn')) {
-      topics = [focused];
-    }
     /* rebuild if count changed */
     var paths = g.querySelectorAll('.mp-radial-spoke');
     if (paths.length !== topics.length) {
@@ -1694,7 +1760,7 @@
     }
     for (var j = 0; j < topics.length; j++) {
       var tn = topics[j];
-      var tc = currentCenter(tn);
+      var tc = currentBoxCenter(tn);
       var ts = layoutOf(tn);
       var tb = nodeBoxSize(tn);
       var ang = Math.atan2(tc.y - c.y, tc.x - c.x);
@@ -1719,7 +1785,7 @@
     Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn, a.mp-chn, a.mp-root'), function (el) {
       var recede;
       if (el.classList.contains('mp-root')) recede = true;
-      else if (el.classList.contains('mp-chn')) recede = keepSlug ? true : el.getAttribute('data-ch') !== String(ch);
+      else if (el.classList.contains('mp-chn')) recede = el.getAttribute('data-ch') !== String(ch);
       else if (keepSlug) recede = el.getAttribute('data-slug') !== keepSlug;
       else recede = el.getAttribute('data-ch') !== String(ch);
       el.classList.toggle('mp-recede', recede);
@@ -1751,6 +1817,103 @@
     return list;
   }
 
+
+  function wrapToTwo(zh, maxW, fs) {
+    zh = (zh || '') + '';
+    if (!zh) return [zh];
+    if (tw(zh, fs) <= maxW) return [zh];
+    var marks = ['（', '・', '，', '、', ' ', '('];
+    var best = -1;
+    for (var i = 1; i < zh.length; i++) {
+      var ch = zh.charAt(i);
+      var prev = zh.charAt(i - 1);
+      if (marks.indexOf(ch) >= 0 || marks.indexOf(prev) >= 0) {
+        var a = zh.slice(0, i).replace(/\s+$/, '');
+        var b = zh.slice(i).replace(/^\s+/, '');
+        if (a && b && tw(a, fs) <= maxW + 4 && tw(b, fs) <= maxW + 4) best = i;
+      }
+    }
+    if (best > 0) return [zh.slice(0, best).replace(/\s+$/, ''), zh.slice(best).replace(/^\s+/, '')];
+    var mid = Math.ceil(zh.length / 2);
+    return [zh.slice(0, mid), zh.slice(mid)];
+  }
+
+  function applyFullTitles(on) {
+    Array.prototype.forEach.call(svg.querySelectorAll('a.mp-tn'), function (el) {
+      var slug = el.getAttribute('data-slug');
+      var box = el.querySelector('.mp-box');
+      var text = el.querySelector('text.mp-t');
+      if (!box || !text) return;
+      if (!on) {
+        if (!el.__lab) return;
+        var o = el.__lab;
+        box.setAttribute('x', o.x);
+        box.setAttribute('y', o.y);
+        box.setAttribute('width', o.w);
+        box.setAttribute('height', o.h);
+        text.setAttribute('x', o.tx);
+        text.setAttribute('y', o.ty);
+        while (text.firstChild) text.removeChild(text.firstChild);
+        text.textContent = o.text;
+        if (o.fml) {
+          var fml = el.querySelector('text.mp-f');
+          if (fml && o.fy) fml.setAttribute('y', o.fy);
+        }
+        el.removeAttribute('title');
+        return;
+      }
+      var info = data.topics && data.topics[slug];
+      var zh = info && info.zh;
+      if (!zh) return;
+      if (!el.__lab) {
+        var f0 = el.querySelector('text.mp-f');
+        el.__lab = {
+          x: box.getAttribute('x'), y: box.getAttribute('y'),
+          w: box.getAttribute('width'), h: box.getAttribute('height'),
+          text: text.textContent, tx: text.getAttribute('x'), ty: text.getAttribute('y'),
+          fml: !!f0, fy: f0 ? f0.getAttribute('y') : null
+        };
+      }
+      var fs = 16, pad = 18, maxW = 196;
+      var lines = wrapToTwo(zh, maxW - pad, fs);
+      var textW = 0;
+      for (var i = 0; i < lines.length; i++) textW = Math.max(textW, tw(lines[i], fs));
+      var w = Math.max(+el.__lab.w, textW + pad);
+      var two = lines.length > 1;
+      var h = +el.__lab.h + (two ? 20 : 0);
+      var cx = +el.__lab.x + +el.__lab.w / 2;
+      var cy = +el.__lab.y + +el.__lab.h / 2;
+      box.setAttribute('x', (cx - w / 2).toFixed(1));
+      box.setAttribute('y', (cy - h / 2).toFixed(1));
+      box.setAttribute('width', w.toFixed(1));
+      box.setAttribute('height', h.toFixed(1));
+      text.setAttribute('x', cx.toFixed(1));
+      while (text.firstChild) text.removeChild(text.firstChild);
+      if (!two) {
+        text.setAttribute('y', (cy - (el.__lab.fml ? 4 : 0)).toFixed(1));
+        text.textContent = lines[0];
+      } else {
+        var y1 = cy - (el.__lab.fml ? 14 : 8);
+        text.setAttribute('y', y1.toFixed(1));
+        var t1 = document.createElementNS(NS, 'tspan');
+        t1.setAttribute('x', cx.toFixed(1));
+        t1.setAttribute('dy', '0');
+        t1.textContent = lines[0];
+        var t2 = document.createElementNS(NS, 'tspan');
+        t2.setAttribute('x', cx.toFixed(1));
+        t2.setAttribute('dy', '18');
+        t2.textContent = lines[1];
+        text.appendChild(t1);
+        text.appendChild(t2);
+      }
+      if (el.__lab.fml) {
+        var fml2 = el.querySelector('text.mp-f');
+        if (fml2) fml2.setAttribute('y', (cy + h / 2 - 10).toFixed(1));
+      }
+      if (zh !== el.__lab.text) el.setAttribute('title', zh);
+    });
+  }
+
   function targetsForChapter(chn, k) {
     var ch = chn.getAttribute('data-ch');
     var dest = mapCenter();
@@ -1774,8 +1937,8 @@
     list.push({ el: chn, dx: dest.x - chHome.x, dy: dest.y - chHome.y, s: cs });
     for (var j = 0; j < placed.length; j++) {
       var p = placed[j];
-      var h = p.home;
-      list.push({ el: p.el, dx: p.x - h.x, dy: p.y - h.y, s: p.s });
+      var d = layoutDeltaTo(p.el, p.x, p.y, p.s);
+      list.push({ el: p.el, dx: d.dx, dy: d.dy, s: p.s });
     }
     Array.prototype.forEach.call(layoutNodes(), function (el) {
       if (el === chn || el.getAttribute('data-ch') === ch) return;
@@ -1788,6 +1951,7 @@
     if (!chn) return;
     opts = opts || {};
     var ch = chn.getAttribute('data-ch');
+    applyFullTitles(true);
     var n = chapterTopics(ch).length;
     var k = chooseChapterK(n);
     var plan = targetsForChapter(chn, k);
@@ -1797,7 +1961,7 @@
     for (var i = 0; i < plan.list.length; i++) {
       var t = plan.list[i];
       if (t.el.getAttribute('data-ch') !== ch) continue;
-      var h = homeCenter(t.el);
+      var h = t.el.querySelector('.mp-box') ? boxCenter(t.el) : homeCenter(t.el);
       var sz = nodeBoxSize(t.el);
       var x = h.x + t.dx, y = h.y + t.dy;
       var hw = sz.w * t.s / 2, hh = sz.h * t.s / 2;
@@ -1827,6 +1991,7 @@
     animateLayouts(plan.list, { instant: inst }, function () {
       lodHold = false;
       updateSpokes();
+      blurMapFocus();
     });
   }
 
@@ -1864,9 +2029,13 @@
     blurMapFocus();
     clearRecede();
     clearSpokes();
-    if (!had && !opts.force) return;
+    if (!had && !opts.force) {
+      applyFullTitles(false);
+      return;
+    }
     animateLayouts(targetsHome(), { instant: inst }, function () {
       clearSpokes();
+      applyFullTitles(false);
     });
   }
 
@@ -1963,8 +2132,8 @@
   function frameBox(box, kind) {
     var V = vb();
     var padW = box.width + 48, padH = box.height + 48;
-    var kMax = kind === 'child' ? 3.4 : 2.8;
-    var kMin = kind === 'child' ? 1.9 : 1.55;
+    var kMax = kind === 'child' ? 3.4 : (kind === 'topic' ? 2.3 : 2.8);
+    var kMin = kind === 'child' ? 1.9 : (kind === 'topic' ? 1.85 : 1.55);
     var k = Math.min(V.w / padW, (V.h * 0.70) / padH, kMax);
     k = clampK(Math.max(k, kMin));
     var cx = box.x + box.width / 2, cy = box.y + box.height / 2;
@@ -2030,17 +2199,13 @@
 
     if (shownSlug && shownSlug !== slug) retractKids({ instant: true });
     enterTopicRadial(a, opts);
-    var destT = mapCenter();
-    var bc = boxCenter(a);
-    var tk = 2.15;
-    var ts = topicScaleForK(tk);
-    animateLayouts([{ el: a, dx: destT.x - bc.x, dy: destT.y - bc.y, s: ts }], opts);
-    frameOn(destT.x, destT.y, tk);
+    /* 专题留在章环（或星图）原位，只做局部放大，小节用视野空位排布 */
+    frameBox(visualUserBox(a), 'topic');
     lodHold = true;
     applyCam(!opts.instant && !reduced(), function () {
       lodHold = false;
       if (focused !== a) return;
-      revealForTopic(a, { instant: reduced() || opts.instant, fit: false });
+      revealForTopic(a, { instant: reduced() || opts.instant, fit: true });
     });
   }
 

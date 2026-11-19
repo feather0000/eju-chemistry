@@ -847,6 +847,7 @@ body.contents {
 
 @media (prefers-reduced-motion: reduce) {
   #map .mp-sub, #map.mp-live .mp-sub { transition: none !important; }
+  #map .mp-xls, #map .mp-xl, #map .mp-frame .mp-cap, #map .mp-frame .mp-cap2 { transition: none !important; }
 }
 
 
@@ -861,7 +862,27 @@ body.contents {
 #map.mp-radial-on a.mp-tn.mp-recede,
 #map.mp-radial-on a.mp-chn.mp-recede { opacity: .12; }
 #map [data-radial-hide="1"] { opacity: 0 !important; }
-#map.mp-radial-topic a.mp-chn { opacity: 0; pointer-events: none; }
+
+#map .mp-xls, #map .mp-xl, #map .mp-frame .mp-cap, #map .mp-frame .mp-cap2 {
+  transition: opacity .45s ease;
+}
+#map.mp-radial-on .mp-xls,
+#map.mp-radial-on .mp-xl {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+#map.mp-radial-on .mp-star, #map.mp-radial-on .mp-ld { opacity: 0 !important; }
+#map.mp-radial-on .mp-frame .mp-cap,
+#map.mp-radial-on .mp-frame .mp-cap2 { opacity: 0; }
+#map .mp-box, #map .mp-nb, #map .mp-sub .mp-box {
+  fill: var(--surface, var(--bg));
+  fill-opacity: 1;
+}
+#map.mp-radial-topic a.mp-tn.mp-recede { opacity: .08; }
+#map .mp-card-f { margin: 4px 0 0; font-size: 14px; font-style: italic; color: var(--ink-2); }
+#map .mp-card-f[hidden] { display: none; }
+
+
 
 
 /* ==== /知识导图互动 ==== */
