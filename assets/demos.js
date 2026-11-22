@@ -1,3 +1,4 @@
+/* Source repository: https://github.com/feather0000/eju-chemistry */
 /* EJU 化学 互动演示：纯计算（浏览器与 Node 测试共用） */
 (function (G) {
   'use strict';
