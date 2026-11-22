@@ -2,31 +2,38 @@ name: Preview course build
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
 
 concurrency:
   group: preview-course-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# 只做检查和 artifact，不改 main、也不往 GitHub Pages 发布。
-# 正式站的 Pages 源仍是 main；github.io 目前会 301 到正式域名，不能当独立预览用。
+# 正式站仍由各仓库 main 的 GitHub Pages 发布，本工作流不改那四个仓库的 Pages 设置。
+# 预览发布到独立仓库 feather0000/eju-preview（无自定义域名）。
 jobs:
   preview:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write
     env:
       PYTHONDONTWRITEBYTECODE: '1'
+      SUBJECT: chemistry
+      PR_NUM: ${{ github.event.pull_request.number }}
+      PREVIEW_ROOT: https://feather0000.github.io/eju-preview
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify the production build (default EJU_ENV=prod)
         run: |
           python3 build.py && python3 verify.py
-      - name: Build a preview copy (not published)
+      - name: Build a preview copy
         env:
           EJU_ENV: preview
+          SITE_BASE: https://feather0000.github.io/eju-preview/chemistry/pr-${{ github.event.pull_request.number }}/
         run: |
           python3 build.py && python3 verify.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: preview-site
           if-no-files-found: error
@@ -37,3 +44,46 @@ jobs:
             robots.txt
             topics
             assets
+      - name: Publish to eju-preview
+        id: publish
+        env:
+          EJU_PREVIEW_DEPLOY_KEY: ${{ secrets.EJU_PREVIEW_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EJU_PREVIEW_DEPLOY_KEY:-}" ]; then
+            echo published=1 >> "$GITHUB_OUTPUT"
+          else
+            echo published=0 >> "$GITHUB_OUTPUT"
+            echo "EJU_PREVIEW_DEPLOY_KEY is not set; skipping publish."
+            exit 0
+          fi
+          bash .github/scripts/publish-preview.sh publish
+
+      - name: Comment the preview URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED: ${{ steps.publish.outputs.published }}
+        run: bash .github/scripts/comment-preview.sh
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      SUBJECT: chemistry
+      PR_NUM: ${{ github.event.pull_request.number }}
+      PREVIEW_ROOT: https://feather0000.github.io/eju-preview
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Remove the preview directory
+        env:
+          EJU_PREVIEW_DEPLOY_KEY: ${{ secrets.EJU_PREVIEW_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EJU_PREVIEW_DEPLOY_KEY:-}" ]; then
+            echo "EJU_PREVIEW_DEPLOY_KEY is not set; skipping cleanup."
+            exit 0
+          fi
+          bash .github/scripts/publish-preview.sh cleanup

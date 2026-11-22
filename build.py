@@ -243,3 +243,4 @@ from _x import build_index
 print('search index entries:',build_index(TOPICS))
 
 siteenv.write_robots(CFG)
+siteenv.finalize_tree(CFG)
