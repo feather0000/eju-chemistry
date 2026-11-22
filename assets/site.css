@@ -887,3 +887,9 @@ body.contents {
 
 /* ==== /知识导图互动 ==== */
 /* ==== /化学站首页目次 ==== */
+
+/* ==== 预览横幅：只在 EJU_ENV=preview 的构建里出现 .eju-pv，正式站不受影响 ==== */
+.eju-pv { box-sizing: border-box; width: 100%; margin: 0; padding: 8px 20px; border-bottom: 1px solid var(--line, #cfc9bc); background: var(--hero-bg, #f6f3eb); color: var(--ink, #1c2024); font: 13.5px/1.55 var(--sans, "Noto Sans SC", "PingFang SC", sans-serif); letter-spacing: .04em; }
+.eju-pv p { margin: 0 auto; max-width: 72rem; }
+.eju-pv a { white-space: nowrap; color: var(--site-iro, var(--accent, #1f4e79)); text-decoration: underline; text-underline-offset: .15em; }
+

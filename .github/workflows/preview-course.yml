@@ -1,0 +1,39 @@
+name: Preview course build
+
+on:
+  pull_request:
+
+concurrency:
+  group: preview-course-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# 只做检查和 artifact，不改 main、也不往 GitHub Pages 发布。
+# 正式站的 Pages 源仍是 main；github.io 目前会 301 到正式域名，不能当独立预览用。
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify the production build (default EJU_ENV=prod)
+        run: |
+          python3 build.py && python3 verify.py
+      - name: Build a preview copy (not published)
+        env:
+          EJU_ENV: preview
+        run: |
+          python3 build.py && python3 verify.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-site
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            index.html
+            404.html
+            robots.txt
+            topics
+            assets
