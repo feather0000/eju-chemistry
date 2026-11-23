@@ -35,7 +35,10 @@ if _TIPS:
 HEADJS = """<script>(function(){var d=document.documentElement,m=document.querySelector('meta[name="color-scheme"]'),t=null;try{t=localStorage.getItem('eju-theme')}catch(e){}if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';d.setAttribute('data-theme',t);if(m)m.content=t})()</script>"""
 TOGGLEJS = """<script>(function(){var d=document.documentElement,b=document.getElementById('theme');if(!b)return;function s(t){d.setAttribute('data-theme',t);var m=document.querySelector('meta[name="color-scheme"]');if(m)m.content=t;b.textContent=t==='dark'?'浅色':'深色';b.setAttribute('aria-label',t==='dark'?'切换到浅色主题':'切换到深色主题')}s(d.getAttribute('data-theme')==='dark'?'dark':'light');b.onclick=function(){var t=d.getAttribute('data-theme')==='dark'?'light':'dark';s(t);try{localStorage.setItem('eju-theme',t)}catch(e){}};addEventListener('storage',function(e){if(e.key==='eju-theme'&&(e.newValue==='light'||e.newValue==='dark'))s(e.newValue)});var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');if(q&&q.addEventListener)q.addEventListener('change',function(e){var v=null;try{v=localStorage.getItem('eju-theme')}catch(_){}if(v!=='light'&&v!=='dark')s(e.matches?'dark':'light')})})();</script>"""
 # SITE-META：每站主色（<html data-site>）、favicon、OG / Twitter 分享卡片（og:image 用绝对 URL）、共用交互脚本
-SITE = 'chemistry'; SITE_NAME = 'EJU 理科 化学'; SITE_PATH = '/'; SITE_URL = 'https://chemistry.eju.feather0.com/'
+import siteenv
+CFG = siteenv.load('chemistry')
+SITE = 'chemistry'; SITE_NAME = 'EJU 理科 化学'; SITE_PATH = CFG.site_path; SITE_URL = CFG.site_url
+
 SITE_DESC = '按 JASSO《日本留学試験 理科シラバス（化学）》编排：物质的构成・物质的状态与变化・化学反应・无机物质・有机化合物・高分子。每页含要点讲解（中文 + 日语术语）、关键公式、原创例题和带解答的 EJU 风格选择题。'
 def headmeta(title, desc, path, root):
     t, d = html.escape(title), html.escape(html.unescape(desc))
@@ -43,7 +46,7 @@ def headmeta(title, desc, path, root):
             f'<link rel="icon" href="{root}assets/favicon.svg" type="image/svg+xml"><link rel="icon" href="{root}assets/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="{root}assets/apple-touch-icon.png">\n'
             f'<meta property="og:type" content="website"><meta property="og:site_name" content="{SITE_NAME}"><meta property="og:locale" content="zh_CN"><meta property="og:title" content="{t}"><meta property="og:description" content="{d}"><meta property="og:url" content="{SITE_URL}{path}">'
             f'<meta property="og:image" content="{SITE_URL}assets/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="{SITE_NAME} · 全专题中文讲义">'
-            f'<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{t}"><meta name="twitter:description" content="{d}"><meta name="twitter:image" content="{SITE_URL}assets/og.png">\n')
+            f'<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{t}"><meta name="twitter:description" content="{d}"><meta name="twitter:image" content="{SITE_URL}assets/og.png">\n' + siteenv.extra_meta(CFG, path))
 def page(t):
     meta = headmeta(f'{SITE_NAME} · {t["n"]} {t["zh"]}', t["lead"], f'topics/{t["slug"]}/', '../../')
     toc=[(sid,tt) for sid,tt,_,_ in t['sections']]+([('demo','互动演示')] if DEMOS.get(t['slug']) else [])+([('examples','例题')] if t['examples'] else [])+([('practice','练习题')] if t['problems'] else [])+([('terms','术语对照')] if t['terms'] else [])
@@ -76,7 +79,7 @@ var L=[].slice.call(document.querySelectorAll('nav.toc a'));if('IntersectionObse
 window.addEventListener('load',function(){{if(!window.renderMathInElement){{document.getElementById('cdn-note').hidden=false;return}}renderMathInElement(document.body,{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'$',right:'$',display:false}}],throwOnError:false}})}})}})();</script>
 <script src="../../assets/nav.js"></script></body></html>'''
 for t in TOPICS:
-    os.makedirs(f'topics/{t["slug"]}',exist_ok=True); open(f'topics/{t["slug"]}/index.html','w').write(page(t))
+    os.makedirs(f'topics/{t["slug"]}',exist_ok=True); open(f'topics/{t["slug"]}/index.html','w').write(siteenv.with_banner(CFG, page(t), f'topics/{t["slug"]}/'))
 # HOME：首页目次（像书的目录：左侧章号，右侧章名与专题，点线引到右侧的题数・过去问・星级）；目次下是知识导图（homemap.py 生成的内联 SVG），
 # 之后「附」列资料与工具，「表」是过去问频度表。样式在 site.css 末尾「化学站首页目次」块，只作用于 body.contents / #map
 CHAPTERS = [  # 章名、日文名、导图上的短名、提要、所含 area
@@ -188,7 +191,7 @@ _np = sum(len(t['problems']) for t in TOPICS); _nb = sum(t['bank']['n'] for t in
 _SITES = [('https://eju.feather0.com/', '四科总入口'), ('https://math.eju.feather0.com/', 'EJU 数学コース2 网站'), ('https://eju.feather0.com/physics/', 'EJU 理科 物理 网站'), ('https://biology.eju.feather0.com/', 'EJU 理科 生物 网站')]
 PREFACE = ('这是按 EJU 理科（化学）大纲整理的中文讲义，分物质的构成、物质的状态、化学反应、无机、有机、高分子六章。建议先按章节读讲解和例题，再做练习；'
            '计算题用到的公式、原子量和常数可以随时在附录里查。各页开头的出题频度来自 2005–2025 年试卷的统计，拿不准先看哪一章时可以参考它，也可以直接看本页最后的频度表。')
-open('index.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
+open('index.html','w').write(siteenv.with_banner(CFG, f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
 {HEADJS}
 <title>EJU 理科 化学 全专题讲解</title>{headmeta(SITE_NAME + " 全专题讲解", SITE_DESC, "", "")}
 <link rel="stylesheet" href="assets/site.css"></head><body class="home contents">
@@ -220,15 +223,15 @@ open('index.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="
 </main>
 <footer class="ct-foot"><p class="ct-sites">相关课程：{"".join(f'<a href="{u}">{a}</a>' for u, a in _SITES)}</p><p>原创讲义与题目，非 JASSO 官方内容。按《日本留学試験 理科シラバス（化学）》编排。</p></footer>
 </div>
-{TOGGLEJS}<script src="assets/vendor/d3-eju.min.js"></script><script src="assets/map.js"></script><script src="assets/nav.js"></script></body></html>''')
-# 404：GitHub Pages 对任意深度的不存在路径都返回它，所以资源用站点绝对路径
-open('404.html','w').write(f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
+{TOGGLEJS}<script src="assets/vendor/d3-eju.min.js"></script><script src="assets/map.js"></script><script src="assets/nav.js"></script></body></html>''', ''))
+# 404：Cloudflare Pages 对任意深度的不存在路径都返回它，所以资源用站点绝对路径
+open('404.html','w').write(siteenv.with_banner(CFG, f'''<!doctype html><html lang="zh-Hans" data-site="{SITE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
 {HEADJS}<title>页面不存在 · {SITE_NAME}</title><meta name="robots" content="noindex"><link rel="icon" href="{SITE_PATH}assets/favicon.svg" type="image/svg+xml"><link rel="icon" href="{SITE_PATH}assets/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="{SITE_PATH}assets/apple-touch-icon.png">
 <link rel="stylesheet" href="{SITE_PATH}assets/site.css"></head><body class="home nf"><main>
 <div class="home-top"><p class="eyebrow">{SITE_NAME}</p><button class="chip theme-btn" id="theme" type="button">深色</button></div>
 <p class="nf-code" aria-hidden="true">404</p><h1>页面不存在</h1><p>这个地址没有对应的页面：可能是链接写错了，或者页面已经移动。可以回到首页按专题查找，或用站内搜索。</p>
 <p class="home-links"><a href="{SITE_PATH}">← 回到 {SITE_NAME} 首页</a><a href="{SITE_PATH}topics/search/">站内搜索</a></p></main>
-{TOGGLEJS}</body></html>''')
+{TOGGLEJS}</body></html>''', ''))
 nav=open('assets/nav.js').read().split('\n')
 T=[dict(n=t['n'],slug=t['slug'],zh=t['zh'],ja=t['ja'],ready=True) for t in TOPICS]
 nav[0]='(function(){var T='+json.dumps(T,ensure_ascii=False)+';'
@@ -238,3 +241,6 @@ print(len(TOPICS),'topics',sum(len(t['problems']) for t in TOPICS),'problems')
 
 from _x import build_index
 print('search index entries:',build_index(TOPICS))
+
+siteenv.write_robots(CFG)
+siteenv.finalize_tree(CFG)
