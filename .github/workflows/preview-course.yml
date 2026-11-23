@@ -8,8 +8,8 @@ concurrency:
   group: preview-course-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# 正式站仍由各仓库 main 的 GitHub Pages 发布，本工作流不改那四个仓库的 Pages 设置。
-# 预览发布到独立仓库 feather0000/eju-preview（无自定义域名）。
+# 正式站由 Cloudflare Pages 从各仓库 main 发布。本工作流不改正式站的 Pages / DNS / Cloudflare 设置。
+# 预览发布到独立仓库 feather0000/eju-preview（无自定义域名，仍用 GitHub Pages）。
 jobs:
   preview:
     if: github.event.action != 'closed'

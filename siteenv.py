@@ -9,7 +9,7 @@ https://feather0000.github.io/eju-preview/physics/pr-8/）。这时 site_path
 会改成对应的路径前缀，并把页面里以 /assets/、/topics/、/physics/ 等开头的
 绝对路径改到该前缀下。canonical 和 og:url 始终指向正式站。
 
-不要把 preview 构建的 HTML 提交到四站的 main。
+正式站由 Cloudflare Pages 从 main 发布。不要把 preview 构建的 HTML 提交到四站的 main。
 """
 from __future__ import annotations
 
